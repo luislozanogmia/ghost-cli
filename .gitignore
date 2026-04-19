@@ -1,0 +1,6 @@
+*.log
+*.png
+*.session
+*.state.json
+tmp/
+__pycache__/
