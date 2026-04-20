@@ -1,0 +1,140 @@
+"""
+Ghost AIfy — The glue between chrome-in-chrome MCP and Ghost vacuum/execute.
+
+Two entry points:
+    1. aify(mcp_text, url, title) -> menu_text
+       Parses MCP read_page output, returns clean numbered menu.
+
+    2. action(choice, vacuum_json, value=None) -> dict
+       Maps a menu number to an MCP action (ref_id + action_type).
+
+Usage from Bash (called by the LLM agent):
+    # Vacuum a page
+    python aify.py vacuum --url "https://..." --title "Page Title" < mcp_output.txt
+
+    # Or with inline text
+    python aify.py vacuum --url "https://..." --title "Page Title" --text "button [ref_1] ..."
+
+    # Get action for a choice
+    python aify.py action 12 --vacuum-json result.json
+    python aify.py action 12 --vacuum-json result.json --value "search query"
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+# Add ghost package to path
+_ghost_dir = str(Path(__file__).parent)
+if _ghost_dir not in sys.path:
+    sys.path.insert(0, _ghost_dir)
+
+from vacuum import vacuum_from_mcp_output, VacuumResult
+from execute import execute_mcp, find_element
+
+
+def aify(mcp_text: str, url: str = "", title: str = "") -> dict:
+    """
+    Parse MCP read_page output and return structured result.
+
+    Returns dict with:
+        menu_text: str  -- the clean numbered menu (what the AI shows the user)
+        vacuum_json: dict  -- serialized VacuumResult for action() calls
+        element_count: int
+    """
+    result = vacuum_from_mcp_output(mcp_text, url=url, title=title)
+    return {
+        "menu_text": result.menu_text,
+        "vacuum_json": {
+            "elements": result.elements,
+            "page_url": result.page_url,
+            "page_title": result.page_title,
+            "element_count": result.element_count,
+        },
+        "element_count": result.element_count,
+    }
+
+
+def action(choice: int, vacuum_json: dict, value: str = None) -> dict:
+    """
+    Map a menu number to an MCP action.
+
+    Returns dict with:
+        ref: str  -- the ref_id to pass to chrome computer tool
+        action: str  -- "click" or "fill"
+        value: str or None  -- text for fill actions
+        description: str  -- human-readable action description
+    """
+    # Reconstruct VacuumResult from JSON
+    result = VacuumResult(
+        menu_text="",
+        elements=vacuum_json.get("elements", []),
+        page_url=vacuum_json.get("page_url", ""),
+        page_title=vacuum_json.get("page_title", ""),
+        element_count=vacuum_json.get("element_count", 0),
+    )
+
+    mcp_action = execute_mcp(choice, result, value=value)
+
+    if mcp_action.get("error"):
+        return {"error": mcp_action["error"]}
+
+    return {
+        "ref": mcp_action["ref_id"],
+        "action": mcp_action["action_type"],
+        "value": mcp_action.get("value"),
+        "description": mcp_action["description"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Ghost AIfy — MCP to text menu bridge")
+    sub = parser.add_subparsers(dest="command")
+
+    # vacuum command
+    p_vac = sub.add_parser("vacuum", help="Parse MCP output into a text menu")
+    p_vac.add_argument("--url", default="", help="Page URL")
+    p_vac.add_argument("--title", default="", help="Page title")
+    p_vac.add_argument("--text", default=None, help="MCP text (reads stdin if omitted)")
+    p_vac.add_argument("--json", action="store_true", help="Output full JSON (menu + vacuum data)")
+
+    # action command
+    p_act = sub.add_parser("action", help="Map menu number to MCP action")
+    p_act.add_argument("choice", type=int, help="Menu number to execute")
+    p_act.add_argument("--vacuum-json", required=True, help="Path to vacuum JSON file")
+    p_act.add_argument("--value", default=None, help="Text value for fill actions")
+
+    args = parser.parse_args()
+
+    if args.command == "vacuum":
+        mcp_text = args.text if args.text else sys.stdin.read()
+        result = aify(mcp_text, url=args.url, title=args.title)
+
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print(result["menu_text"])
+
+    elif args.command == "action":
+        vac_path = Path(args.vacuum_json)
+        if not vac_path.exists():
+            print(f"Error: {vac_path} not found", file=sys.stderr)
+            sys.exit(1)
+        vacuum_json = json.loads(vac_path.read_text(encoding="utf-8"))
+        result = action(args.choice, vacuum_json, value=args.value)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
