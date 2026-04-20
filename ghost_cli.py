@@ -11,7 +11,7 @@ _ghost_dir = str(Path(__file__).resolve().parent)
 if _ghost_dir not in sys.path:
     sys.path.insert(0, _ghost_dir)
 
-import mcp_server as runtime
+import runtime_host as runtime
 
 
 def _extract_text(contents: list[Any]) -> str:

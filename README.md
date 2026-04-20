@@ -18,6 +18,8 @@ The legacy server files still exist in the repository only as compatibility
 shims for older integrations. They are not the recommended or supported way to
 run Ghost.
 
+Archived legacy server files now live under `deprecated/mcp/`.
+
 ## Install
 
 ```bash

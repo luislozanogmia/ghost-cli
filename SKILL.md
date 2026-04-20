@@ -29,11 +29,10 @@ Chrome (live browser)
 
 Primary path: `./ghost-cli`
 
-Legacy-only path: `ghost_stdio_proxy.py`
+Archived legacy server path: `deprecated/mcp/`
 
-The legacy server path is not supported for real browsing runs. If it is used
-at all, it should only act as a thin translation layer over the same direct
-runtime.
+The legacy server path is not supported for real browsing runs. It was moved to
+`deprecated/mcp/` so the repo root only carries the supported CLI runtime.
 
 ## One-Time Wiring
 
@@ -53,7 +52,7 @@ playwright install chromium
 - `python3 ghost_cache_bridge.py --self-test`
 - `python3 ghost_cache_bridge.py vacuum <temp_file> --url <url> --title <title>`
 - `python3 ghost_cache_bridge.py action <choice> --value <text>`
-- `python3 ghost_stdio_proxy.py` (unsupported legacy shim for older integrations)
+- `python3 deprecated/mcp/ghost_stdio_proxy.py` (archived unsupported shim)
 
 See [FUNCTIONALITY.md](/Users/luis.lozano/.codex/skills/ghost-cli/FUNCTIONALITY.md:1) for the old-tool to CLI mapping.
 
@@ -79,7 +78,7 @@ All commands accept optional `instance_id`. Omit it to use the `default` session
 3. Always call `ghost_save_auth` immediately after login so auth persists.
 4. Use different `instance_id` values for independent browser sessions.
 5. Prefer `./ghost-cli repl` for long LinkedIn runs so state stays in one CLI process.
-6. Do not treat the legacy server shim as a supported production transport.
+6. Do not treat anything under `deprecated/mcp/` as a supported production transport.
 
 ## Standard Flow
 1. Check connection

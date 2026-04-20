@@ -21,7 +21,7 @@ GHOST_SHARED_URL = os.environ.get(
 )
 
 SERVER_LOG_FILE = LOG_DIR / "ghost_cli_server.log"
-PROXY_LOG_FILE = LOG_DIR / "ghost_stdio_proxy.log"
+PROXY_LOG_FILE = LOG_DIR / "chrome_transport_proxy.log"
 DAEMON_STDOUT_LOG_FILE = LOG_DIR / "ghost_shared_daemon.stdout.log"
 DAEMON_STDERR_LOG_FILE = LOG_DIR / "ghost_shared_daemon.stderr.log"
 DAEMON_PID_FILE = RUNTIME_DIR / "ghost_shared_daemon.json"
