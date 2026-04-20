@@ -1,19 +1,19 @@
 """
-Ghost MCP Bridge — Connects chrome-in-chrome MCP to Ghost vacuum/execute.
+Ghost cached bridge — maps raw page snapshot output into Ghost vacuum/action flows.
 
-This script is called by the LLM agent to process MCP output without
-the raw page data ever entering the conversation.
+This script is called by the LLM agent to process raw page snapshot output
+without the raw page data ever entering the conversation.
 
 Flow:
-    1. LLM calls read_page MCP → raw output saved to temp file by MCP
-    2. LLM calls: python ghost_mcp.py vacuum <temp_file> --url URL --title TITLE
+    1. LLM gets raw page snapshot text from a browser/runtime
+    2. LLM calls: python ghost_cache_bridge.py vacuum <temp_file> --url URL --title TITLE
     3. Script reads temp file, runs vacuum, prints ONLY the clean menu
     4. LLM shows user the clean menu (raw page never in chat)
 
     5. User picks a number
-    6. LLM calls: python ghost_mcp.py action <number>
-    7. Script reads cached vacuum result, returns ref + action type
-    8. LLM calls computer MCP with that ref
+    6. LLM calls: python ghost_cache_bridge.py action <number>
+    7. Script reads cached vacuum result and returns a structured action payload
+    8. LLM hands that payload to the active browser runtime
 
 The vacuum result is cached at GHOST_CACHE so action() doesn't need
 the vacuum JSON passed explicitly.
@@ -67,7 +67,7 @@ _cleanup_stale_caches()
 
 
 def cmd_vacuum(mcp_file: str, url: str = "", title: str = ""):
-    """Read MCP output from file, vacuum it, print clean menu, cache result."""
+    """Read raw page snapshot text from file, vacuum it, print clean menu, cache result."""
     mcp_path = Path(mcp_file)
     if not mcp_path.exists():
         print(f"Error: {mcp_path} not found", file=sys.stderr)
@@ -91,7 +91,7 @@ def cmd_vacuum(mcp_file: str, url: str = "", title: str = ""):
 
 
 def cmd_action(choice: int, value: str = None):
-    """Read cached vacuum result, map choice to MCP action."""
+    """Read cached vacuum result and map a choice to a structured action."""
     if not GHOST_CACHE.exists():
         print(json.dumps({"error": "No cached vacuum result. Run vacuum first."}))
         sys.exit(1)
@@ -124,30 +124,30 @@ def cmd_action(choice: int, value: str = None):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Ghost MCP Bridge")
+    parser = argparse.ArgumentParser(description="Ghost cached bridge")
     parser.add_argument("--self-test", action="store_true", help="Validate CLI wiring.")
     parser.add_argument("--print-config", action="store_true", help="Print resolved config.")
     parser.add_argument("--check-env", action="store_true", help="Check required env vars.")
     sub = parser.add_subparsers(dest="command")
 
-    p_vac = sub.add_parser("vacuum", help="Vacuum MCP output into clean menu")
-    p_vac.add_argument("mcp_file", help="Path to file containing MCP read_page output")
+    p_vac = sub.add_parser("vacuum", help="Vacuum raw page snapshot text into a clean menu")
+    p_vac.add_argument("mcp_file", help="Path to file containing raw page snapshot text")
     p_vac.add_argument("--url", default="", help="Page URL")
     p_vac.add_argument("--title", default="", help="Page title")
 
-    p_act = sub.add_parser("action", help="Map menu number to MCP ref + action")
+    p_act = sub.add_parser("action", help="Map menu number to a structured action payload")
     p_act.add_argument("choice", type=int, help="Menu number")
     p_act.add_argument("--value", default=None, help="Text value for fill actions")
 
     args = parser.parse_args()
 
     if args.self_test:
-        _ = argparse.ArgumentParser(description="Ghost MCP Bridge")
+        _ = argparse.ArgumentParser(description="Ghost cached bridge")
         print("self-test: ok")
         return
 
     if args.print_config:
-        print("skill=ghost_mcp")
+        print("skill=ghost-cli")
         print("api=none")
         return
 

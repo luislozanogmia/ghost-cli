@@ -46,7 +46,7 @@ def get_ghost_tools() -> list[Tool]:
                             "\"http://localhost:9222\" for Liquid's embedded Chrome). "
                             "When set, Ghost controls the external browser instead of launching its own. "
                             "Use the special value \"live-chrome\" to attach to the user's currently open "
-                            "Chrome session through the official Chrome MCP auto-connect flow."
+                            "Chrome session through the live Chrome auto-connect flow."
                         ),
                     },
                     "reuse_only": {
@@ -70,7 +70,7 @@ def get_ghost_tools() -> list[Tool]:
             name="ghost_instance_close",
             description=(
                 "Close a named Ghost browser instance and unregister it from the local "
-                "Ghost daemon. This does not delete its profile directory."
+                "Ghost runtime. This does not delete its profile directory."
             ),
             inputSchema={
                 "type": "object",
@@ -153,7 +153,7 @@ def get_ghost_tools() -> list[Tool]:
             name="ghost_status",
             description=(
                 "Show current Ghost state for one instance: cached page URL, element count, "
-                "browser connection status, and shared HTTP session count."
+                "browser connection status, and runtime session count."
             ),
             inputSchema={
                 "type": "object",

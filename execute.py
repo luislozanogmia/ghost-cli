@@ -2,14 +2,14 @@
 EXECUTE -- Ghost Browser v2 action module.
 
 Takes a user's numeric choice from the vacuum menu and executes the
-corresponding action on the page (Playwright) or prepares an MCP payload.
+corresponding action on the page (Playwright) or prepares a structured action payload.
 
 Usage:
     # Direct Playwright execution
     result = execute(choice=3, vacuum_result=vr, page=page)
     result = execute(choice=7, vacuum_result=vr, page=page, value="search query")
 
-    # MCP execution (returns dict for caller to invoke MCP tools)
+    # Structured action output for external runtimes
     payload = execute_mcp(choice=3, vacuum_result=vr)
 
     # Describe what an action would do
@@ -205,7 +205,7 @@ def execute(
 
 
 # ---------------------------------------------------------------------------
-# MCP execution path (chrome-in-chrome)
+# Structured external-runtime execution path
 # ---------------------------------------------------------------------------
 
 def execute_mcp(
@@ -214,10 +214,10 @@ def execute_mcp(
     value: Optional[str] = None,
 ) -> dict:
     """
-    Build an MCP action dict for a numbered vacuum menu element.
+    Build a structured action dict for a numbered vacuum menu element.
 
     Instead of executing directly via Playwright, this returns the
-    information needed for the caller to invoke the appropriate MCP tool.
+    information needed for the caller to invoke the appropriate browser action.
 
     Args:
         choice: The element number from the vacuum menu.
@@ -246,13 +246,13 @@ def execute_mcp(
     ref_id = element.get("ref")
     description = describe_action(element, value)
 
-    # Determine action type for MCP
+    # Determine action type for the external runtime
     if role in _FILL_ROLES:
         action_type = "fill"
     elif role in _SLIDER_ROLES:
         action_type = "fill" if value else "click"
     else:
-        # click, link, toggle, unknown -- all map to click for MCP
+        # click, link, toggle, unknown -- all map to click
         action_type = "click"
 
     return {
@@ -283,7 +283,7 @@ def _cli_main():
         print("  vacuum_json  Path to vacuum output JSON")
         print("  choice       Element number to execute")
         print("  --value TEXT  Value for fill/set actions")
-        print("  --mcp        Show MCP action dict instead of Playwright")
+        print("  --mcp        Show structured action dict instead of Playwright")
         sys.exit(1)
 
     json_path = sys.argv[1]
@@ -328,7 +328,7 @@ def _cli_main():
 
     if use_mcp:
         result = execute_mcp(choice, vr, value=value)
-        print("MCP Action Dict:")
+        print("Action Dict:")
         print(json.dumps(result, indent=2, ensure_ascii=False))
     else:
         print("[DRY RUN] No live Playwright page provided.")

@@ -1,3 +1,8 @@
+"""Unsupported legacy stdio shim for older Ghost server integrations.
+
+Use `./ghost-cli` for supported execution.
+"""
+
 from __future__ import annotations
 
 import asyncio

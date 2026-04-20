@@ -96,7 +96,7 @@ def _resolve_chrome_path() -> str:
     for candidate in _DEFAULT_CHROME_PATHS:
         if candidate.exists():
             return str(candidate)
-    raise RuntimeError("Could not locate chrome.exe for Chrome MCP transport.")
+    raise RuntimeError("Could not locate chrome.exe for the Chrome transport.")
 
 
 @dataclass
@@ -203,7 +203,7 @@ class ChromeMcpRuntime:
         )
         self.browser_url = f"http://127.0.0.1:{self._browser_debug_port}"
         self._log(
-            "Chrome MCP browser launched instance=%s pid=%s browser_url=%s",
+            "Chrome transport browser launched instance=%s pid=%s browser_url=%s",
             self.instance_id,
             self._browser_process.pid,
             self.browser_url,
@@ -222,7 +222,7 @@ class ChromeMcpRuntime:
         elif self.auto_connect:
             base_args.extend(["--autoConnect", "--channel=stable"])
         else:
-            raise RuntimeError("Chrome MCP runtime has no browser target configured.")
+            raise RuntimeError("Chrome transport has no browser target configured.")
         return StdioServerParameters(command=command, args=base_args)
 
     def _thread_main(self) -> None:
@@ -257,7 +257,7 @@ class ChromeMcpRuntime:
                             read_timeout_seconds=timedelta(seconds=payload.get("timeout_seconds", 60.0)),
                         )
                         future.set_result(_tool_text(result))
-                    except BaseException as exc:  # pragma: no cover - delegated from MCP session
+                    except BaseException as exc:  # pragma: no cover - delegated from transport session
                         future.set_exception(exc)
 
     async def _ensure_worker(self) -> None:
@@ -279,9 +279,9 @@ class ChromeMcpRuntime:
         self._worker_thread.start()
         await asyncio.to_thread(self._worker_ready.wait, 30.0)
         if self._worker_error is not None:
-            raise RuntimeError(f"Chrome MCP worker failed to start: {self._worker_error}") from self._worker_error
+            raise RuntimeError(f"Chrome transport worker failed to start: {self._worker_error}") from self._worker_error
         if not self._worker_ready.is_set():
-            raise RuntimeError("Chrome MCP worker did not become ready in time.")
+            raise RuntimeError("Chrome transport worker did not become ready in time.")
 
     async def call_tool(
         self,
@@ -402,7 +402,7 @@ class ChromeMcpRuntime:
         )
         pages = _parse_pages(text) or await self.list_pages()
         if not pages:
-            raise RuntimeError("Chrome MCP could not open an initial page.")
+            raise RuntimeError("Chrome transport could not open an initial page.")
         page = next((item for item in pages if item.get("selected")), None) or pages[-1]
         self._page_id = page["pageId"]
         return page

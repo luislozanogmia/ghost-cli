@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Ghost Chrome Proxy — shared HTTP proxy wrapping chrome-devtools-mcp.
+"""Ghost Chrome Proxy — shared HTTP proxy wrapping the Chrome debug transport.
 
 Chrome only allows ONE CDP debugger connection. This proxy holds that single
 connection and exposes it to any number of consumers via HTTP on port 8766.
-Auto-reconnects when chrome-devtools-mcp subprocess dies or goes stale.
+Auto-reconnects when the Chrome debug subprocess dies or goes stale.
 """
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ class GhostChromeProxy:
 
         if not self._session_healthy or self._session is None:
             return web.json_response(
-                {"result": None, "error": "MCP session not connected (reconnecting)"}, status=503
+                {"result": None, "error": "Chrome transport not connected (reconnecting)"}, status=503
             )
 
         _NO_PRESELECT = {"select_page", "list_pages", "new_page"}

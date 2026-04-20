@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""ghost_bridge.py — CLI bridge for Ghost MCP tools.
+"""ghost_bridge.py — legacy bridge for older Ghost server clients.
 
-Connects to the running Ghost shared daemon and calls a tool.
+Connects to the running Ghost shared runtime and calls a tool.
 Can be used from any environment (WSL2, native, subprocess) via run_command.
+
+This path is retained only for compatibility and is not the supported way to
+run Ghost.
 
 Usage:
     python ghost_bridge.py vacuum [--url URL] [--limit N]
@@ -137,7 +140,7 @@ async def call_ghost_tool(tool_name: str, arguments: dict) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Ghost MCP CLI Bridge")
+    parser = argparse.ArgumentParser(description="Ghost legacy server bridge")
     sub = parser.add_subparsers(dest="command", required=True)
 
     # vacuum

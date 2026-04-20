@@ -20,7 +20,7 @@ GHOST_SHARED_URL = os.environ.get(
     f"http://{GHOST_SHARED_HOST}:{GHOST_SHARED_PORT}{GHOST_SHARED_HTTP_PATH}",
 )
 
-SERVER_LOG_FILE = LOG_DIR / "ghost_mcp_server.log"
+SERVER_LOG_FILE = LOG_DIR / "ghost_cli_server.log"
 PROXY_LOG_FILE = LOG_DIR / "ghost_stdio_proxy.log"
 DAEMON_STDOUT_LOG_FILE = LOG_DIR / "ghost_shared_daemon.stdout.log"
 DAEMON_STDERR_LOG_FILE = LOG_DIR / "ghost_shared_daemon.stderr.log"

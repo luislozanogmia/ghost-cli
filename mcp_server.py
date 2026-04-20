@@ -1,9 +1,10 @@
 """
-Legacy Ghost MCP server.
+Legacy Ghost compatibility server.
 
 The primary Ghost path is now the direct CLI runtime. This module remains as a
-compatibility layer and runtime host for callers that still need MCP-shaped
-tool dispatch.
+compatibility layer and runtime host for callers that still need server-shaped
+tool dispatch. It is not the supported production path for long-lived browser
+runs.
 """
 
 from __future__ import annotations
@@ -48,12 +49,12 @@ from vacuum import VacuumResult, _build_result, paginate_result, vacuum_from_mcp
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Ghost MCP Server")
+    parser = argparse.ArgumentParser(description="Ghost legacy compatibility server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http"],
         default="stdio",
-        help="How to expose the Ghost MCP server.",
+        help="How to expose the legacy Ghost compatibility server.",
     )
     parser.add_argument(
         "--host",
@@ -104,7 +105,7 @@ def _install_exception_logging() -> None:
     def _log_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             return
-        LOGGER.exception("Ghost MCP server crashed", exc_info=(exc_type, exc_value, exc_traceback))
+        LOGGER.exception("Ghost compatibility server crashed", exc_info=(exc_type, exc_value, exc_traceback))
 
     sys.excepthook = _log_exception
 
@@ -411,7 +412,7 @@ class GhostInstance:
         if self._liquid_webview_target() is not None:
             return "liquid-cdp"
         if self._chrome_mcp is not None and self._chrome_mcp.connected:
-            return "chrome-mcp"
+            return "chrome-transport"
         if self.context is not None:
             return "playwright"
         return "disconnected"
@@ -740,7 +741,7 @@ class GhostInstance:
         if self._chrome_mcp is not None:
             page = await self._chrome_mcp.ensure_page(url=url)
             self.page_url = str(page.get("url", ""))
-            self.page_title = self.page_url or "Chrome MCP Page"
+            self.page_title = self.page_url or "Chrome Page"
 
             # Write snapshot to a temp file to avoid transferring the full AX tree
             # as a response payload (which times out on heavy SPAs like WhatsApp).
@@ -799,7 +800,7 @@ class GhostInstance:
                             timeout_seconds=15.0,
                         )
                         import json as _json, re as _re2
-                        # chrome-devtools-mcp wraps output: extract JSON from ```json ... ``` block
+                        # chrome-devtools transport wraps output: extract JSON from ```json ... ``` block
                         _m = _re2.search(r'```(?:json)?\s*([\s\S]*?)```', raw or "")
                         raw_json = _m.group(1).strip() if _m else (raw or "").strip()
                         items = _json.loads(raw_json)
@@ -947,9 +948,9 @@ class GhostInstance:
                         except Exception as e:
                             return f"Error: Failed to execute JS click on [{choice}]: {e}"
                 elif not ref and not js_click:
-                    return f"Error: Element [{choice}] is missing a Chrome MCP uid or JS click script. Re-vacuum to refresh the page state."
+                    return f"Error: Element [{choice}] is missing a Chrome transport uid or JS click script. Re-vacuum to refresh the page state."
                 else:
-                    # Standard MCP click with ref
+                    # Standard transport click with ref
                     if role in ("textbox", "searchbox", "combobox", "spinbutton"):
                         if not value:
                             return f"Error: Element [{choice}] is a {role} - provide a value."
@@ -1049,7 +1050,7 @@ class GhostInstance:
                         return f"Error: Element [{element_num}] not found."
                     uid = elem.get("ref")
                     if not uid:
-                        return f"Error: Element [{element_num}] is missing a Chrome MCP uid."
+                        return f"Error: Element [{element_num}] is missing a Chrome transport uid."
                     element_description = f"[{element_num}] {elem['role']} '{elem['name']}'"
 
                 screenshots_dir = GHOST_DIR / "screenshots"
@@ -1119,7 +1120,7 @@ class GhostInstance:
             if self._chrome_mcp is not None:
                 self._touch()
                 return (
-                    "Chrome MCP transport persists auth in the browser profile automatically. "
+                    "Chrome transport persists auth in the browser profile automatically. "
                     f"Profile path: {self.context_dir.resolve()}"
                 )
 
@@ -1289,7 +1290,7 @@ async def _session_watchdog(manager: StreamableHTTPSessionManager) -> None:
         if active_sessions > 0:
             last_active_at = loop.time()
         elif await _has_open_browsers() and (loop.time() - last_active_at) >= close_grace_seconds:
-            await _close_all_instance_browsers("last active shared MCP session closed")
+            await _close_all_instance_browsers("last active shared server session closed")
             last_active_at = loop.time()
 
         await anyio.sleep(1)
@@ -1494,7 +1495,7 @@ async def _run_streamable_http() -> None:
     )
     server = uvicorn.Server(config)
     LOGGER.info(
-        "Starting Ghost shared MCP daemon on http://%s:%s%s",
+        "Starting Ghost shared server daemon on http://%s:%s%s",
         ARGS.host,
         ARGS.port,
         ARGS.http_path,
@@ -1505,7 +1506,7 @@ async def _run_streamable_http() -> None:
 async def main() -> None:
     try:
         LOGGER.info(
-            "Ghost MCP starting transport=%s new_instance=%s default_context_dir=%s named_context_root=%s",
+            "Ghost compatibility server starting transport=%s new_instance=%s default_context_dir=%s named_context_root=%s",
             ARGS.transport,
             ARGS.new_instance,
             DEFAULT_CONTEXT_DIR.resolve(),

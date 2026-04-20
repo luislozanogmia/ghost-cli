@@ -13,7 +13,7 @@ Usage:
     # From a raw accessibility tree dict
     result = vacuum_from_tree(tree_dict)
 
-    # From MCP read_page text output
+    # From raw page snapshot text
     result = vacuum_from_mcp_output(mcp_text)
 
     # CLI: vacuum a URL
@@ -468,7 +468,7 @@ def vacuum_from_tree(
     Vacuum from a raw accessibility tree snapshot (dict).
 
     Accepts the same structure as Playwright's page.accessibility.snapshot().
-    Works with data from any source: MCP, CDP session, saved snapshot, etc.
+    Works with data from any source: browser transport, CDP session, saved snapshot, etc.
     """
     if not tree_dict:
         return VacuumResult(
@@ -488,9 +488,9 @@ def vacuum_from_tree(
 
 def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> VacuumResult:
     """
-    Parse MCP read_page text output into a VacuumResult.
+    Parse raw page snapshot text into a VacuumResult.
 
-    The MCP format looks like:
+    The parsed snapshot format looks like:
         - button "Sign In" [ref=e23]
         - link "Home" [ref=e45]
         - textbox "Search..." [ref=e67]
@@ -505,7 +505,7 @@ def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> Vac
     counter = 0
     current_region = "MAIN"
 
-    # Patterns for MCP output formats
+    # Patterns for supported snapshot formats
     # Format 0: uid=1_3 link "Learn more" url="..."
     uid_named_pat = re.compile(
         r'uid=([^\s]+)\s+([A-Za-z][\w-]*)\s+"([^"]*)"',
@@ -561,7 +561,7 @@ def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> Vac
             current_region = section_to_region.get(sec_name, "MAIN")
             continue
 
-        # Chrome DevTools MCP snapshot format: uid=<id> role "name"
+        # Chrome DevTools snapshot format: uid=<id> role "name"
         m = uid_named_pat.search(stripped)
         if m:
             ref = m.group(1)
@@ -583,7 +583,7 @@ def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> Vac
             landmark_groups.setdefault(current_region, []).append(counter)
             continue
 
-        # Chrome DevTools MCP snapshot format: uid=<id> role
+        # Chrome DevTools snapshot format: uid=<id> role
         m = uid_unnamed_pat.search(stripped)
         if m:
             ref = m.group(1)
@@ -610,7 +610,7 @@ def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> Vac
             role = m.group(1).lower()
             name = m.group(2)
             ref_raw = m.group(3)
-            # Ensure ref has ref_ prefix for MCP compatibility
+            # Ensure ref has ref_ prefix for structured-action compatibility
             ref = f"ref_{ref_raw}" if not ref_raw.startswith("ref_") else ref_raw
             # Non-interactive roles may indicate landmarks
             if role not in INTERACTIVE_ROLES:
@@ -670,7 +670,7 @@ def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> Vac
                 landmark_groups.setdefault(current_region, []).append(counter)
 
     total = len(elements)
-    menu_text = _format_menu(elements, landmark_groups, title or "MCP Page", url)
+    menu_text = _format_menu(elements, landmark_groups, title or "Ghost Page", url)
 
     elem_dicts = [
         {"number": e.number, "role": e.role, "name": e.name, "ref": e.ref, "node": None, "js_click": None}
@@ -681,7 +681,7 @@ def vacuum_from_mcp_output(mcp_text: str, url: str = "", title: str = "") -> Vac
         menu_text=menu_text,
         elements=elem_dicts,
         page_url=url,
-        page_title=title or "MCP Page",
+        page_title=title or "Ghost Page",
         element_count=len(elements),
         total_count=total,
         has_more=False,
@@ -713,7 +713,7 @@ def _apply_js_supplements(
     # Note: This function is called from vacuum.py context.
     # In production use, the page object would be passed to execute the script.
     # For now, this is a placeholder that shows the structure.
-    # The actual script execution happens in mcp_server.py when vacuum is called.
+    # The actual script execution happens in the runtime host when vacuum is called.
     pass
 
 

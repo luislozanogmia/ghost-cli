@@ -1,16 +1,16 @@
 """
-Ghost AIfy — The glue between chrome-in-chrome MCP and Ghost vacuum/execute.
+Ghost AIfy — The glue between raw page snapshot text and Ghost vacuum/execute.
 
 Two entry points:
     1. aify(mcp_text, url, title) -> menu_text
-       Parses MCP read_page output, returns clean numbered menu.
+       Parses raw page snapshot text and returns a clean numbered menu.
 
     2. action(choice, vacuum_json, value=None) -> dict
-       Maps a menu number to an MCP action (ref_id + action_type).
+       Maps a menu number to a structured action payload.
 
 Usage from Bash (called by the LLM agent):
     # Vacuum a page
-    python aify.py vacuum --url "https://..." --title "Page Title" < mcp_output.txt
+    python aify.py vacuum --url "https://..." --title "Page Title" < page_snapshot.txt
 
     # Or with inline text
     python aify.py vacuum --url "https://..." --title "Page Title" --text "button [ref_1] ..."
@@ -37,7 +37,7 @@ from execute import execute_mcp, find_element
 
 def aify(mcp_text: str, url: str = "", title: str = "") -> dict:
     """
-    Parse MCP read_page output and return structured result.
+    Parse raw page snapshot text and return structured result.
 
     Returns dict with:
         menu_text: str  -- the clean numbered menu (what the AI shows the user)
@@ -59,7 +59,7 @@ def aify(mcp_text: str, url: str = "", title: str = "") -> dict:
 
 def action(choice: int, vacuum_json: dict, value: str = None) -> dict:
     """
-    Map a menu number to an MCP action.
+    Map a menu number to a structured action payload.
 
     Returns dict with:
         ref: str  -- the ref_id to pass to chrome computer tool
@@ -96,18 +96,18 @@ def action(choice: int, vacuum_json: dict, value: str = None) -> dict:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Ghost AIfy — MCP to text menu bridge")
+    parser = argparse.ArgumentParser(description="Ghost AIfy — page snapshot to text menu bridge")
     sub = parser.add_subparsers(dest="command")
 
     # vacuum command
-    p_vac = sub.add_parser("vacuum", help="Parse MCP output into a text menu")
+    p_vac = sub.add_parser("vacuum", help="Parse raw page snapshot text into a text menu")
     p_vac.add_argument("--url", default="", help="Page URL")
     p_vac.add_argument("--title", default="", help="Page title")
-    p_vac.add_argument("--text", default=None, help="MCP text (reads stdin if omitted)")
+    p_vac.add_argument("--text", default=None, help="Raw page snapshot text (reads stdin if omitted)")
     p_vac.add_argument("--json", action="store_true", help="Output full JSON (menu + vacuum data)")
 
     # action command
-    p_act = sub.add_parser("action", help="Map menu number to MCP action")
+    p_act = sub.add_parser("action", help="Map menu number to a structured action")
     p_act.add_argument("choice", type=int, help="Menu number to execute")
     p_act.add_argument("--vacuum-json", required=True, help="Path to vacuum JSON file")
     p_act.add_argument("--value", default=None, help="Text value for fill actions")
