@@ -27,6 +27,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -42,7 +43,70 @@ _ghost_dir = str(Path(__file__).resolve().parent)
 if _ghost_dir not in sys.path:
     sys.path.insert(0, _ghost_dir)
 
-from shared_runtime import GHOST_SHARED_URL, ensure_runtime_dirs
+from shared_runtime import (
+    DAEMON_STDERR_LOG_FILE,
+    DAEMON_STDOUT_LOG_FILE,
+    GHOST_SHARED_HOST,
+    GHOST_SHARED_HTTP_PATH,
+    GHOST_SHARED_PORT,
+    GHOST_SHARED_URL,
+    ensure_runtime_dirs,
+)
+
+
+async def _shared_daemon_is_ready() -> bool:
+    try:
+        reader, writer = await asyncio.open_connection(GHOST_SHARED_HOST, GHOST_SHARED_PORT)
+    except OSError:
+        return False
+
+    writer.close()
+    await writer.wait_closed()
+    return True
+
+
+def _spawn_shared_daemon() -> int:
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("mcp_server.py")),
+        "--transport",
+        "streamable-http",
+        "--host",
+        GHOST_SHARED_HOST,
+        "--port",
+        str(GHOST_SHARED_PORT),
+        "--http-path",
+        GHOST_SHARED_HTTP_PATH,
+    ]
+
+    with open(DAEMON_STDOUT_LOG_FILE, "a", encoding="utf-8") as stdout_file, open(
+        DAEMON_STDERR_LOG_FILE,
+        "a",
+        encoding="utf-8",
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=str(Path(__file__).resolve().parent),
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            start_new_session=True,
+        )
+    return process.pid
+
+
+async def _ensure_shared_daemon() -> None:
+    if await _shared_daemon_is_ready():
+        return
+
+    _spawn_shared_daemon()
+    deadline = asyncio.get_running_loop().time() + 20.0
+    while asyncio.get_running_loop().time() < deadline:
+        if await _shared_daemon_is_ready():
+            return
+        await asyncio.sleep(0.25)
+
+    raise RuntimeError(f"Ghost shared backend did not start on {GHOST_SHARED_HOST}:{GHOST_SHARED_PORT}")
 
 
 async def call_ghost_tool(tool_name: str, arguments: dict) -> str:
@@ -51,6 +115,7 @@ async def call_ghost_tool(tool_name: str, arguments: dict) -> str:
     from mcp.client.streamable_http import streamable_http_client
 
     ensure_runtime_dirs()
+    await _ensure_shared_daemon()
 
     async with AsyncExitStack() as stack:
         read, write, _ = await stack.enter_async_context(

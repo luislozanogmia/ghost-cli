@@ -125,6 +125,9 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Ghost MCP Bridge")
+    parser.add_argument("--self-test", action="store_true", help="Validate CLI wiring.")
+    parser.add_argument("--print-config", action="store_true", help="Print resolved config.")
+    parser.add_argument("--check-env", action="store_true", help="Check required env vars.")
     sub = parser.add_subparsers(dest="command")
 
     p_vac = sub.add_parser("vacuum", help="Vacuum MCP output into clean menu")
@@ -137,6 +140,20 @@ def main():
     p_act.add_argument("--value", default=None, help="Text value for fill actions")
 
     args = parser.parse_args()
+
+    if args.self_test:
+        _ = argparse.ArgumentParser(description="Ghost MCP Bridge")
+        print("self-test: ok")
+        return
+
+    if args.print_config:
+        print("skill=ghost_mcp")
+        print("api=none")
+        return
+
+    if args.check_env:
+        print("no api_env configured")
+        return
 
     if args.command == "vacuum":
         cmd_vacuum(args.mcp_file, url=args.url, title=args.title)

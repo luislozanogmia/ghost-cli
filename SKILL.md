@@ -1,18 +1,20 @@
 ---
-name: ghost
-description: "Ghost Browser v3 — AI CLI for deterministic web automation. Multi-instance MCP server with named Chrome sessions for interactive browsing."
-allowed-tools: Bash, Read, Edit, Write, Glob, Grep, mcp__ghost__ghost_instance_create, mcp__ghost__ghost_instance_list, mcp__ghost__ghost_instance_close, mcp__ghost__ghost_vacuum, mcp__ghost__ghost_click, mcp__ghost__ghost_more, mcp__ghost__ghost_screenshot, mcp__ghost__ghost_status, mcp__ghost__ghost_save_auth, mcp__ghost__ghost_eval
+name: ghost_mcp
+description: Ghost Browser v3 browser automation via the Ghost MCP bridge and stdio proxy.
 ---
 
-# Ghost Browser v3 — Model Usage Guide
+# Ghost MCP
 
-Ghost is a browser automation MCP server. As the model, you control a live Chrome browser by calling Ghost MCP tools. This document tells you everything you need to operate it.
+Use this skill when browser automation should run through Ghost Browser v3 instead of the older chrome_mcp attachment flow.
 
----
+## What this skill provides
+- A deterministic Ghost MCP server with named browser instances
+- A stdio proxy entrypoint for MCP clients
+- A bridge for vacuum/action workflows over live browser pages
+- Chrome session attachment through the Ghost runtime, including external browser support
 
-## Architecture (what you are talking to)
-
-```
+## Architecture
+```text
 You (Coding Agent)
   ↓ stdio MCP
 ghost_stdio_proxy.py       <- the wrapper you connect to
@@ -24,21 +26,19 @@ chrome_mcp_runtime.py      <- wraps the Chrome MCP server process
 Chrome (live browser)
 ```
 
-`ghost_stdio_proxy.py` is the only entry point. It auto-starts the daemon. You never call `mcp_server.py` directly.
-
----
+`ghost_stdio_proxy.py` is the MCP entrypoint. It auto-starts the daemon. Do not call `mcp_server.py` directly.
 
 ## One-Time Wiring
 
-**Repo:** `https://github.com/luislozanogmia/ghost-mcp`
-Playwright is neede only for automated and isolated instances (running paralell agents, automated workflows, testing and development tasks. If you use case is browser assistance, you can skip it)
+From the skill folder:
 
 ```bash
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-Add to `.mcp.json`:
+To expose the server to an MCP client, point it at `ghost_stdio_proxy.py`:
+
 ```json
 {
   "mcpServers": {
@@ -50,85 +50,60 @@ Add to `.mcp.json`:
 }
 ```
 
-1. Once wired, Ghost MCP tools are available in your tool list. Verify with `ghost_status`.
-2. Create in the same skill folder where Ghost is "ghost_memory.md" you need to load this everytime, avoid slops, one liners about learnins. Example: "Some inboxes on have two actions available one to select the actual conversation and display it and other to checkbox for bulk action"
-
----
+## Runner
+- `python3 ghost_mcp.py --help`
+- `python3 ghost_mcp.py --self-test`
+- `python3 ghost_mcp.py vacuum <temp_file> --url <url> --title <title>`
+- `python3 ghost_mcp.py action <choice> --value <text>`
+- `python3 ghost_stdio_proxy.py`
 
 ## Tools You Have
 
 | Tool | What it does |
 |---|---|
-| `ghost_status` | Check if browser is connected -- call this first if unsure |
-| `ghost_vacuum` | Read current page -- returns numbered list of all interactive elements |
+| `ghost_status` | Check if browser is connected; call this first if unsure |
+| `ghost_vacuum` | Read current page and return a numbered list of interactive elements |
 | `ghost_click` | Click element by number from vacuum output |
 | `ghost_more` | Scroll / load more elements (`offset=N` to skip ahead) |
 | `ghost_screenshot` | Take a screenshot for visual verification |
-| `ghost_save_auth` | Save current browser cookies to disk -- call immediately after manual login |
-| `ghost_instance_create` | Create or reuse a named Chrome session (optionally navigate to URL) |
+| `ghost_save_auth` | Save current browser cookies to disk; call immediately after manual login |
+| `ghost_instance_create` | Create or reuse a named Chrome session, optionally navigating to a URL |
 | `ghost_instance_list` | List all active named sessions |
-| `ghost_instance_close` | Close a named session (does NOT delete profile) |
+| `ghost_instance_close` | Close a named session without deleting its profile |
 
 All tools accept optional `instance_id`. Omit it to use the `default` session.
 
----
-## CRITICAL Rules
+## Critical Rules
+1. Always call `ghost_status` before assuming the browser is connected.
+2. Always re-vacuum after navigation; element numbers are only valid for the current page state.
+3. Always call `ghost_save_auth` immediately after login so auth persists.
+4. Use different `instance_id` values for independent browser sessions.
 
-1. **Never use `ghost_vacuum url=X` when other tabs must stay untouched.** It navigates the internally tracked active tab. Use `navigate_page + page_id` via curl instead.
-2. **Always `list_pages` before navigating** to confirm which tab ID to target.
-3. **Always `ghost_save_auth` immediately after login** -- auth does not auto-persist.
-4. **Re-vacuum after every navigation** -- element numbers are only valid for the current page state.
-
-## How to Use Ghost -- Standard Flow
-
-Every time you need to navigate or interact with a page, follow this sequence:
-
-**1. Check connection**
-```
+## Standard Flow
+1. Check connection
+```text
 ghost_status
 ```
 
-**2. Find the right tab** (if user has multiple tabs open)
-```bash
-curl -s http://127.0.0.1:8766/call \
-  -H "Content-Type: application/json" \
-  -d '{"name":"list_pages","arguments":{}}'
-```
-Returns: `1: https://... [selected]`, `2: https://...` -- note the page ID.
-
-**3. Navigate to a specific tab** (without touching others)
-```bash
-curl -s http://127.0.0.1:8766/call \
-  -H "Content-Type: application/json" \
-  -d '{"name":"navigate_page","arguments":{"type":"url","url":"https://TARGET","timeout":30000},"page_id":2}'
-```
-
-**4. Read the page**
-```
+2. Read the page
+```text
 ghost_vacuum
 ```
 Returns a numbered list of every interactive element. Elements are indexed starting at 1.
 
-**5. Interact**
-```
+3. Interact
+```text
 ghost_click {"choice": 7}      # click element 7
 ghost_more                     # load more if list was truncated
 ghost_screenshot               # verify visually
 ```
 
-**6. Re-vacuum after any navigation**
-Every click that triggers a page load -- call `ghost_vacuum` again. Element numbers reset on every new page.
-
-**7. Make the experience seemless for your user**
-Learn from mistakes and append to a "ghost_memory.md"
-
----
+4. Re-vacuum after any navigation. Element numbers reset on every new page.
 
 ## Multi-Session Pattern
-
 Use when you need two independent browser sessions simultaneously:
 
-```
+```text
 ghost_instance_create {"instance_id": "session-a", "url": "https://example.com"}
 ghost_instance_create {"instance_id": "session-b", "url": "https://other.com"}
 ghost_vacuum {"instance_id": "session-a"}
@@ -138,20 +113,10 @@ ghost_instance_close {"instance_id": "session-b"}
 
 Always pass the same `instance_id` on every call for that session.
 
----
-
-## Auth Persistence (for Playwright only, no needed if --autoconnect on Chrome MCP)
-
+## Auth Persistence
 LinkedIn and other sites expire sessions. Correct flow:
 1. User logs in manually in the browser
 2. You call `ghost_save_auth` immediately on the same `instance_id`
-3. Ghost saves cookies -- loaded automatically on next startup
+3. Ghost saves cookies and loads them automatically on next startup
 
-Never attempt to type passwords -- security restriction.
-
----
-
-## References
-
-- Tab management & proxy internals: [chrome-proxy.md](chrome-proxy.md)
-- Auth persistence & browser profiles: [browser-context.md](browser-context.md)
+Never attempt to type passwords.
