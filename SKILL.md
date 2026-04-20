@@ -13,7 +13,7 @@ Ghost is a browser automation MCP server. As the model, you control a live Chrom
 ## Architecture (what you are talking to)
 
 ```
-You (Claude)
+You (Coding Agent)
   ↓ stdio MCP
 ghost_stdio_proxy.py       <- the wrapper you connect to
   ↓ HTTP
@@ -28,9 +28,10 @@ Chrome (live browser)
 
 ---
 
-## One-Time Wiring (user does this once)
+## One-Time Wiring
 
 **Repo:** `https://github.com/luislozanogmia/ghost-mcp`
+Playwright is neede only for automated and isolated instances (running paralell agents, automated workflows, testing and development tasks. If you use case is browser assistance, you can skip it)
 
 ```bash
 pip install -r requirements.txt
@@ -49,7 +50,8 @@ Add to `.mcp.json`:
 }
 ```
 
-Once wired, Ghost MCP tools are available in your tool list. Verify with `ghost_status`.
+1. Once wired, Ghost MCP tools are available in your tool list. Verify with `ghost_status`.
+2. Create in the same skill folder where Ghost is "ghost_memory.md" you need to load this everytime, avoid slops, one liners about learnins. Example: "Some inboxes on have two actions available one to select the actual conversation and display it and other to checkbox for bulk action"
 
 ---
 
@@ -70,6 +72,12 @@ Once wired, Ghost MCP tools are available in your tool list. Verify with `ghost_
 All tools accept optional `instance_id`. Omit it to use the `default` session.
 
 ---
+## CRITICAL Rules
+
+1. **Never use `ghost_vacuum url=X` when other tabs must stay untouched.** It navigates the internally tracked active tab. Use `navigate_page + page_id` via curl instead.
+2. **Always `list_pages` before navigating** to confirm which tab ID to target.
+3. **Always `ghost_save_auth` immediately after login** -- auth does not auto-persist.
+4. **Re-vacuum after every navigation** -- element numbers are only valid for the current page state.
 
 ## How to Use Ghost -- Standard Flow
 
@@ -111,6 +119,9 @@ ghost_screenshot               # verify visually
 **6. Re-vacuum after any navigation**
 Every click that triggers a page load -- call `ghost_vacuum` again. Element numbers reset on every new page.
 
+**7. Make the experience seemless for your user**
+Learn from mistakes and append to a "ghost_memory.md"
+
 ---
 
 ## Multi-Session Pattern
@@ -129,7 +140,7 @@ Always pass the same `instance_id` on every call for that session.
 
 ---
 
-## Auth Persistence
+## Auth Persistence (for Playwright only, no needed if --autoconnect on Chrome MCP)
 
 LinkedIn and other sites expire sessions. Correct flow:
 1. User logs in manually in the browser
@@ -137,15 +148,6 @@ LinkedIn and other sites expire sessions. Correct flow:
 3. Ghost saves cookies -- loaded automatically on next startup
 
 Never attempt to type passwords -- security restriction.
-
----
-
-## CRITICAL Rules
-
-1. **Never use `ghost_vacuum url=X` when other tabs must stay untouched.** It navigates the internally tracked active tab. Use `navigate_page + page_id` via curl instead.
-2. **Always `list_pages` before navigating** to confirm which tab ID to target.
-3. **Always `ghost_save_auth` immediately after login** -- auth does not auto-persist.
-4. **Re-vacuum after every navigation** -- element numbers are only valid for the current page state.
 
 ---
 
