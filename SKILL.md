@@ -9,6 +9,7 @@ Use this skill when browser automation should run through Ghost Browser v3 using
 
 ## What this skill provides
 - A deterministic direct CLI runtime with named browser instances
+- A persistent local daemon for `ghost-cli call`, so long workflows survive across shell invocations
 - A long-lived JSON-line REPL for agentic browser sessions
 - A bridge for vacuum/action workflows over live browser pages
 - Chrome session attachment through the Ghost runtime, including external browser support
@@ -49,6 +50,8 @@ playwright install chromium
 - `./ghost-cli call ghost_status`
 - `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"live","cdp_url":"live-chrome"}'`
 - `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}'`
+- `./ghost-cli daemon-status`
+- `./ghost-cli daemon-stop`
 - `./ghost-cli repl`
 - `python3 helpers/ghost_cache_bridge.py --help`
 - `python3 helpers/ghost_cache_bridge.py --self-test`
@@ -79,7 +82,7 @@ All commands accept optional `instance_id`. Omit it to use the `default` session
 2. Always re-vacuum after navigation; element numbers are only valid for the current page state.
 3. Always call `ghost_save_auth` immediately after login so auth persists.
 4. Use different `instance_id` values for independent browser sessions.
-5. Prefer `./ghost-cli repl` for long LinkedIn runs so state stays in one CLI process.
+5. `./ghost-cli call` is persistent by default; keep the same `instance_id` across calls for long LinkedIn runs.
 6. Do not treat anything under `deprecated/mcp/` as a supported production transport.
 7. For the managed LinkedIn Playwright wrappers, use `playwright_session: "linkedin_auth_a"` or `playwright_session: "linkedin_auth_b"` instead of CDP.
 
@@ -109,7 +112,7 @@ Managed Playwright session attach:
 ./ghost-cli call ghost_screenshot
 ```
 
-4. Re-vacuum after any navigation. Element numbers reset on every new page.
+4. Re-vacuum after any navigation. Element numbers reset on every new page state, but persistent `call` keeps the same cache across shell invocations for the same `instance_id`.
 
 ## Multi-Session Pattern
 Use when you need two independent browser sessions simultaneously:

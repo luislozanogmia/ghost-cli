@@ -18,6 +18,10 @@ The supported CLI path can attach to:
 - explicit `cdp_url` targets
 - managed Playwright sessions `linkedin_auth_a` and `linkedin_auth_b`
 
+`ghost-cli call` is persistent by default. It auto-starts a local daemon and
+reuses the same in-memory runtime across separate shell calls, so numbered
+menus remain valid as long as you keep using the same `instance_id`.
+
 ## Tool Parity
 
 | Former tool | CLI form | Notes |
@@ -34,9 +38,17 @@ The supported CLI path can attach to:
 | `ghost_screenshot` | `./ghost-cli call ghost_screenshot --arguments '{"instance_id":"demo","full_page":true}'` | Saves a screenshot to disk. |
 | `ghost_save_auth` | `./ghost-cli call ghost_save_auth --arguments '{"instance_id":"demo"}'` | Persists browser auth. |
 
+Daemon controls:
+
+| Command | CLI form | Notes |
+|---|---|---|
+| `daemon-status` | `./ghost-cli daemon-status` | Shows whether the persistent local daemon is up. |
+| `daemon-stop` | `./ghost-cli daemon-stop` | Asks the persistent local daemon to shut down cleanly. |
+
 ## Long-Lived Agent Mode
 
-For agentic browsing, use a single long-lived CLI session:
+For agentic browsing, either reuse persistent `call` with the same
+`instance_id`, or use a single long-lived CLI session:
 
 ```bash
 ./ghost-cli repl

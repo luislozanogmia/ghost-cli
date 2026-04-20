@@ -13,6 +13,7 @@ path is now the CLI only:
 
 - `./ghost-cli call ...`
 - `./ghost-cli repl`
+- `./ghost-cli daemon-status`
 
 The supported CLI path no longer depends on the Python `mcp` package.
 
@@ -47,17 +48,30 @@ Run one command:
 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"live","limit":50}'
 ```
 
+`ghost-cli call` is persistent by default. It auto-starts a local Ghost daemon
+and reuses the same runtime across separate shell calls, so the same
+`instance_id` keeps its browser attach and numbered vacuum state. Use
+`--ephemeral` only when you intentionally want a throwaway process.
+
 Attach to a managed Playwright LinkedIn session:
 
 ```bash
 ./ghost-cli call ghost_instance_create --arguments '{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}'
 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"li-b","url":"https://www.linkedin.com/feed/","limit":20}'
+./ghost-cli call ghost_click --arguments '{"instance_id":"li-b","choice":12}'
 ```
 
 Run a long-lived session:
 
 ```bash
 ./ghost-cli repl
+```
+
+Check or stop the persistent daemon:
+
+```bash
+./ghost-cli daemon-status
+./ghost-cli daemon-stop
 ```
 
 Example REPL commands:
@@ -77,6 +91,7 @@ Example REPL commands:
 ## Supported Model
 
 - Direct CLI runtime
+- Persistent `ghost-cli call` runtime for long workflows
 - Long-lived JSON-line REPL sessions
 - Vacuum and numbered-selector workflows
 - Live Chrome attach via the Ghost runtime

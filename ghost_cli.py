@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 _ghost_dir = str(Path(__file__).resolve().parent)
@@ -11,6 +13,16 @@ if _ghost_dir not in sys.path:
     sys.path.insert(0, _ghost_dir)
 
 import runtime_host as runtime
+from shared_runtime import (
+    CLI_DAEMON_HOST,
+    CLI_DAEMON_PID_FILE,
+    CLI_DAEMON_PORT,
+    CLI_DAEMON_STDERR_LOG_FILE,
+    CLI_DAEMON_STDOUT_LOG_FILE,
+    ensure_runtime_dirs,
+    pid_exists,
+    read_json,
+)
 
 
 def _tool_payload(tool) -> dict[str, object]:
@@ -28,6 +40,69 @@ async def _invoke_tool(name: str, arguments: dict[str, object] | None) -> str:
 async def _shutdown_runtime(reason: str) -> None:
     await runtime._close_all_instance_browsers(reason)
     await runtime._stop_playwright()
+
+
+async def _daemon_request(payload: dict[str, object]) -> dict[str, object]:
+    reader, writer = await asyncio.open_connection(CLI_DAEMON_HOST, CLI_DAEMON_PORT)
+    try:
+        writer.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        await writer.drain()
+        raw = await reader.readline()
+        if not raw:
+            raise RuntimeError("ghost daemon closed without a response")
+        response = json.loads(raw.decode("utf-8"))
+        if not isinstance(response, dict):
+            raise RuntimeError("ghost daemon returned an invalid response")
+        return response
+    finally:
+        writer.close()
+        with suppress(Exception):
+            await writer.wait_closed()
+
+
+async def _daemon_is_ready() -> bool:
+    try:
+        response = await _daemon_request({"type": "health"})
+    except Exception:
+        return False
+    return bool(response.get("ok"))
+
+
+def _spawn_daemon() -> int:
+    ensure_runtime_dirs()
+    command = [sys.executable, str(Path(__file__).with_name("ghost_daemon.py"))]
+    with open(CLI_DAEMON_STDOUT_LOG_FILE, "a", encoding="utf-8") as stdout_file, open(
+        CLI_DAEMON_STDERR_LOG_FILE,
+        "a",
+        encoding="utf-8",
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command,
+            cwd=str(Path(__file__).resolve().parent),
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            start_new_session=True,
+        )
+    return process.pid
+
+
+async def _ensure_daemon() -> None:
+    if await _daemon_is_ready():
+        return
+
+    pid_payload = read_json(CLI_DAEMON_PID_FILE)
+    pid = int(pid_payload.get("pid", 0)) if isinstance(pid_payload, dict) else 0
+    if not pid_exists(pid):
+        _spawn_daemon()
+
+    deadline = asyncio.get_running_loop().time() + 20.0
+    while asyncio.get_running_loop().time() < deadline:
+        if await _daemon_is_ready():
+            return
+        await asyncio.sleep(0.25)
+
+    raise RuntimeError(f"ghost daemon did not start on {CLI_DAEMON_HOST}:{CLI_DAEMON_PORT}")
 
 
 async def _list_tools_payload() -> list[dict[str, object]]:
@@ -68,12 +143,60 @@ def cmd_list_tools(_args) -> None:
 def cmd_call(args) -> None:
     async def _run() -> None:
         arguments = _load_arguments(args.arguments)
-        text = await _invoke_tool(args.tool_name, arguments)
+        if args.ephemeral:
+            text = await _invoke_tool(args.tool_name, arguments)
+        else:
+            await _ensure_daemon()
+            response = await _daemon_request(
+                {
+                    "type": "call_tool",
+                    "tool": args.tool_name,
+                    "arguments": arguments,
+                }
+            )
+            if not response.get("ok"):
+                raise RuntimeError(str(response.get("error", "ghost daemon call failed")))
+            text = str(response.get("text", ""))
         if args.json_output:
             print(json.dumps(_response_payload(args.tool_name, text), ensure_ascii=False))
         else:
             print(text)
-        await _shutdown_runtime("cli one-shot command completed")
+        if args.ephemeral:
+            await _shutdown_runtime("cli one-shot command completed")
+
+    asyncio.run(_run())
+
+
+def cmd_daemon_status(_args) -> None:
+    async def _run() -> None:
+        if await _daemon_is_ready():
+            response = await _daemon_request({"type": "health"})
+            print(json.dumps(response, ensure_ascii=False))
+            return
+
+        pid_payload = read_json(CLI_DAEMON_PID_FILE)
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "ready": False,
+                    "pid": (pid_payload or {}).get("pid") if isinstance(pid_payload, dict) else None,
+                    "pid_file": str(CLI_DAEMON_PID_FILE),
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    asyncio.run(_run())
+
+
+def cmd_daemon_stop(_args) -> None:
+    async def _run() -> None:
+        if not await _daemon_is_ready():
+            print(json.dumps({"ok": True, "stopped": False, "reason": "daemon not running"}, ensure_ascii=False))
+            return
+        response = await _daemon_request({"type": "shutdown"})
+        print(json.dumps(response, ensure_ascii=False))
 
     asyncio.run(_run())
 
@@ -146,10 +269,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Wrap the response in a JSON envelope.",
     )
+    p_call.add_argument(
+        "--ephemeral",
+        action="store_true",
+        help="Run the tool in a throwaway process instead of the persistent local daemon.",
+    )
     p_call.set_defaults(func=cmd_call)
 
     p_repl = sub.add_parser("repl", help="Run a long-lived JSON-line Ghost CLI session.")
     p_repl.set_defaults(func=cmd_repl)
+
+    p_daemon_status = sub.add_parser("daemon-status", help="Show whether the persistent Ghost CLI daemon is running.")
+    p_daemon_status.set_defaults(func=cmd_daemon_status)
+
+    p_daemon_stop = sub.add_parser("daemon-stop", help="Ask the persistent Ghost CLI daemon to shut down cleanly.")
+    p_daemon_stop.set_defaults(func=cmd_daemon_stop)
 
     return parser
 

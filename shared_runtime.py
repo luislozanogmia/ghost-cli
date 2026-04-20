@@ -25,6 +25,12 @@ PROXY_LOG_FILE = LOG_DIR / "chrome_transport_proxy.log"
 DAEMON_STDOUT_LOG_FILE = LOG_DIR / "ghost_shared_daemon.stdout.log"
 DAEMON_STDERR_LOG_FILE = LOG_DIR / "ghost_shared_daemon.stderr.log"
 DAEMON_PID_FILE = RUNTIME_DIR / "ghost_shared_daemon.json"
+CLI_DAEMON_HOST = os.environ.get("GHOST_CLI_DAEMON_HOST", "127.0.0.1")
+CLI_DAEMON_PORT = int(os.environ.get("GHOST_CLI_DAEMON_PORT", "8876"))
+CLI_DAEMON_LOG_FILE = LOG_DIR / "ghost_cli_daemon.log"
+CLI_DAEMON_STDOUT_LOG_FILE = LOG_DIR / "ghost_cli_daemon.stdout.log"
+CLI_DAEMON_STDERR_LOG_FILE = LOG_DIR / "ghost_cli_daemon.stderr.log"
+CLI_DAEMON_PID_FILE = RUNTIME_DIR / "ghost_cli_daemon.json"
 
 
 def ensure_runtime_dirs() -> None:
