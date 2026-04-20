@@ -6,7 +6,7 @@ Commands:
     ghost run <script> <method> Import a generated script and call a method.
     ghost refresh <script>      Re-scout the original URL and regenerate.
 
-Ghost MCP -- open source browser automation toolkit.
+Ghost Browser automation toolkit.
 """
 
 import argparse
@@ -222,7 +222,7 @@ def cmd_refresh(args):
 
 
 def build_parser():
-    """Build the argparse parser with scout/run/refresh subcommands."""
+    """Build the argparse parser with browser and generation subcommands."""
     parser = argparse.ArgumentParser(
         prog="ghost",
         description="Ghost Browser — Headless page intelligence for agentic navigation.",
@@ -279,6 +279,32 @@ def build_parser():
     )
     p_refresh.add_argument("script", help="Path to the existing generated .py script.")
 
+    p_tool = subparsers.add_parser(
+        "tool",
+        help="Call one Ghost browser tool directly through the CLI runtime.",
+    )
+    p_tool.add_argument("tool_name", help="Ghost tool name, e.g. ghost_vacuum.")
+    p_tool.add_argument(
+        "--arguments",
+        default="{}",
+        help="JSON object of tool arguments.",
+    )
+    p_tool.add_argument(
+        "--json-output",
+        action="store_true",
+        help="Wrap the tool response in a JSON envelope.",
+    )
+
+    p_repl = subparsers.add_parser(
+        "repl",
+        help="Run a long-lived JSON-line Ghost CLI session.",
+    )
+
+    subparsers.add_parser(
+        "list-tools",
+        help="List the Ghost browser tool surface exposed by the CLI runtime.",
+    )
+
     return parser
 
 
@@ -295,6 +321,17 @@ def main():
         "run": cmd_run,
         "refresh": cmd_refresh,
     }
+
+    if args.command in {"tool", "repl", "list-tools"}:
+        import ghost_cli
+
+        if args.command == "tool":
+            ghost_cli.cmd_call(args)
+        elif args.command == "repl":
+            ghost_cli.cmd_repl(args)
+        else:
+            ghost_cli.cmd_list_tools(args)
+        return
 
     try:
         dispatch[args.command](args)

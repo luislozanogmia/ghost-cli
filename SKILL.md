@@ -1,33 +1,37 @@
 ---
 name: ghost_mcp
-description: Ghost Browser v3 browser automation via the Ghost MCP bridge and stdio proxy.
+description: Ghost Browser v3 browser automation via the direct CLI runtime, with MCP kept only as a legacy compatibility shim.
 ---
 
-# Ghost MCP
+# Ghost CLI
 
-Use this skill when browser automation should run through Ghost Browser v3 instead of the older chrome_mcp attachment flow.
+Use this skill when browser automation should run through Ghost Browser v3 using the direct CLI runtime instead of the older Ghost MCP daemon/proxy flow.
 
 ## What this skill provides
-- A deterministic Ghost MCP server with named browser instances
-- A stdio proxy entrypoint for MCP clients
+- A deterministic direct CLI runtime with named browser instances
+- A long-lived JSON-line REPL for agentic browser sessions
 - A bridge for vacuum/action workflows over live browser pages
 - Chrome session attachment through the Ghost runtime, including external browser support
+- A legacy MCP compatibility shim that now acts only as a translation layer
 
 ## Architecture
 ```text
 You (Coding Agent)
-  ↓ stdio MCP
-ghost_stdio_proxy.py       <- the wrapper you connect to
-  ↓ HTTP
-mcp_server.py              <- daemon, manages named Chrome sessions
+  ↓ CLI / JSON lines
+ghost_cli.py               <- the primary entrypoint
   ↓
-chrome_mcp_runtime.py      <- wraps the Chrome MCP server process
+mcp_server.py              <- runtime host / compatibility layer
+  ↓
+chrome_mcp_runtime.py      <- Chrome transport when live Chrome attach is needed
   ↓
 Chrome (live browser)
 ```
 
-`ghost_stdio_proxy.py` is the MCP entrypoint. It auto-starts the daemon. Do not call `mcp_server.py` directly.
-It now retries one backend tool call automatically after reopening a stale Ghost backend session, so transient backend disconnects do not require a manual Codex retry.
+Primary path: `ghost_cli.py`
+
+Legacy-only path: `ghost_stdio_proxy.py`
+
+The MCP path is no longer the primary execution route. If used, it should only act as a translation layer over the same direct runtime.
 
 ## One-Time Wiring
 
@@ -63,13 +67,19 @@ enabled = true
 Then reload or restart Codex so the new MCP server is registered.
 
 ## Runner
+- `python3 ghost_cli.py list-tools`
+- `python3 ghost_cli.py call ghost_status`
+- `python3 ghost_cli.py call ghost_instance_create --arguments '{"instance_id":"live","cdp_url":"live-chrome"}'`
+- `python3 ghost_cli.py repl`
 - `python3 ghost_mcp.py --help`
 - `python3 ghost_mcp.py --self-test`
 - `python3 ghost_mcp.py vacuum <temp_file> --url <url> --title <title>`
 - `python3 ghost_mcp.py action <choice> --value <text>`
-- `python3 ghost_stdio_proxy.py`
+- `python3 ghost_stdio_proxy.py` (legacy compatibility shim)
 
-## Tools You Have
+See [FUNCTIONALITY.md](/Users/luis.lozano/.codex/skills/ghost_mcp/FUNCTIONALITY.md:1) for the old-tool to CLI mapping.
+
+## Commands You Have
 
 | Tool | What it does |
 |---|---|
@@ -83,31 +93,32 @@ Then reload or restart Codex so the new MCP server is registered.
 | `ghost_instance_list` | List all active named sessions |
 | `ghost_instance_close` | Close a named session without deleting its profile |
 
-All tools accept optional `instance_id`. Omit it to use the `default` session.
+All commands accept optional `instance_id`. Omit it to use the `default` session.
 
 ## Critical Rules
 1. Always call `ghost_status` before assuming the browser is connected.
 2. Always re-vacuum after navigation; element numbers are only valid for the current page state.
 3. Always call `ghost_save_auth` immediately after login so auth persists.
 4. Use different `instance_id` values for independent browser sessions.
+5. Prefer `ghost_cli.py repl` for long LinkedIn runs so state stays in one CLI process.
 
 ## Standard Flow
 1. Check connection
 ```text
-ghost_status
+python3 ghost_cli.py call ghost_status
 ```
 
 2. Read the page
 ```text
-ghost_vacuum
+python3 ghost_cli.py call ghost_vacuum
 ```
 Returns a numbered list of every interactive element. Elements are indexed starting at 1.
 
 3. Interact
 ```text
-ghost_click {"choice": 7}      # click element 7
-ghost_more                     # load more if list was truncated
-ghost_screenshot               # verify visually
+python3 ghost_cli.py call ghost_click --arguments '{"choice":7}'
+python3 ghost_cli.py call ghost_more
+python3 ghost_cli.py call ghost_screenshot
 ```
 
 4. Re-vacuum after any navigation. Element numbers reset on every new page.
@@ -116,11 +127,11 @@ ghost_screenshot               # verify visually
 Use when you need two independent browser sessions simultaneously:
 
 ```text
-ghost_instance_create {"instance_id": "session-a", "url": "https://example.com"}
-ghost_instance_create {"instance_id": "session-b", "url": "https://other.com"}
-ghost_vacuum {"instance_id": "session-a"}
-ghost_click {"instance_id": "session-b", "choice": 5}
-ghost_instance_close {"instance_id": "session-b"}
+python3 ghost_cli.py call ghost_instance_create --arguments '{"instance_id":"session-a","url":"https://example.com"}'
+python3 ghost_cli.py call ghost_instance_create --arguments '{"instance_id":"session-b","url":"https://other.com"}'
+python3 ghost_cli.py call ghost_vacuum --arguments '{"instance_id":"session-a"}'
+python3 ghost_cli.py call ghost_click --arguments '{"instance_id":"session-b","choice":5}'
+python3 ghost_cli.py call ghost_instance_close --arguments '{"instance_id":"session-b"}'
 ```
 
 Always pass the same `instance_id` on every call for that session.

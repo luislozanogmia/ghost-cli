@@ -1,9 +1,9 @@
 """
-Ghost MCP Server - Text-mode browser for AI agents.
+Legacy Ghost MCP server.
 
-Default mode is stdio for direct MCP child-process use.
-Shared mode is Streamable HTTP so multiple disposable stdio proxies can
-reuse the same long-lived Ghost daemon.
+The primary Ghost path is now the direct CLI runtime. This module remains as a
+compatibility layer and runtime host for callers that still need MCP-shaped
+tool dispatch.
 """
 
 from __future__ import annotations
@@ -85,7 +85,18 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-ARGS = _parse_args()
+def _default_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        transport="stdio",
+        host="127.0.0.1",
+        port=8765,
+        http_path="/mcp",
+        new_instance=False,
+        close_grace_seconds=5.0,
+    )
+
+
+ARGS = _parse_args() if __name__ == "__main__" else _default_args()
 LOGGER = setup_logging("ghost.mcp_server", SERVER_LOG_FILE)
 
 
