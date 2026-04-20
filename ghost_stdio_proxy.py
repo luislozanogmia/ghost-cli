@@ -314,6 +314,31 @@ async def _ensure_backend_session() -> ClientSession:
         ) from last_error
 
 
+async def _call_backend_tool_with_recovery(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+    last_error: Exception | None = None
+
+    for attempt in range(2):
+        try:
+            session = await _ensure_backend_session()
+            return await session.call_tool(name, arguments)
+        except Exception as exc:
+            last_error = exc
+            LOGGER.warning(
+                "Ghost backend tool call %s failed on attempt %s/2: %s",
+                name,
+                attempt + 1,
+                exc,
+            )
+            await _close_backend_session()
+            if attempt == 0:
+                await asyncio.sleep(0.25)
+
+    assert last_error is not None
+    raise RuntimeError(
+        f"Ghost backend connection failed during '{name}' after reconnect retry: {last_error}"
+    ) from last_error
+
+
 def _write_response(payload: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(payload, separators=(",", ":")) + "\n")
     sys.stdout.flush()
@@ -388,8 +413,7 @@ async def _handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
 
         LOGGER.info("Forwarding Ghost tool call %s", name)
         try:
-            session = await _ensure_backend_session()
-            result = await session.call_tool(name, arguments)
+            result = await _call_backend_tool_with_recovery(name, arguments)
             LOGGER.info("Completed Ghost tool call %s", name)
             return _jsonrpc_result(
                 request_id,
@@ -402,7 +426,7 @@ async def _handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
                 content=[
                     types.TextContent(
                         type="text",
-                        text=f"Ghost backend connection failed during '{name}': {exc}. Retry the tool call.",
+                        text=str(exc),
                     )
                 ],
                 isError=True,

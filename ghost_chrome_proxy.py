@@ -70,6 +70,7 @@ class GhostChromeProxy:
         self._lock = asyncio.Lock()
         self._reconnect_task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._session_cycle_event = asyncio.Event()
         self._app = web.Application()
         self._app.router.add_get("/health", self._handle_health)
         self._app.router.add_get("/tools", self._handle_tools)
@@ -80,6 +81,7 @@ class GhostChromeProxy:
             LOG.warning("Session marked stale -- scheduling reconnect")
         self._session_healthy = False
         self._session = None
+        self._session_cycle_event.set()
 
     async def _handle_health(self, _request: web.Request) -> web.Response:
         return web.json_response({
@@ -137,21 +139,18 @@ class GhostChromeProxy:
                 if not text and name not in {"close_page"}:
                     LOG.warning("Tool %s returned empty result -- session may be stale", name)
                     self._mark_stale()
-                    asyncio.ensure_future(self._reconnect_loop())
                     return web.json_response(
                         {"result": None, "error": "session stale, reconnecting"}
                     )
                 return web.json_response({"result": text, "error": None})
             except asyncio.TimeoutError:
                 self._mark_stale()
-                asyncio.ensure_future(self._reconnect_loop())
                 return web.json_response(
                     {"result": None, "error": f"timeout after {timeout}s -- reconnecting"}
                 )
             except Exception as exc:
                 LOG.exception("Tool call %s failed", name)
                 self._mark_stale()
-                asyncio.ensure_future(self._reconnect_loop())
                 return web.json_response({"result": None, "error": str(exc)})
 
     async def _connect_once(self) -> bool:
@@ -183,41 +182,74 @@ class GhostChromeProxy:
 
     async def _reconnect_loop(self) -> None:
         """Keep trying to reconnect until successful or stop requested."""
-        if self._reconnect_task and not self._reconnect_task.done():
+        current_task = asyncio.current_task()
+        if self._reconnect_task and self._reconnect_task is not current_task and not self._reconnect_task.done():
             return  # already reconnecting
-        self._reconnect_task = asyncio.current_task()
+        self._reconnect_task = current_task
 
-        for attempt in range(1, _MAX_RECONNECT_ATTEMPTS + 1):
-            if self._stop_event.is_set():
-                return
-            if self._session_healthy:
-                return  # already reconnected by another path
-            LOG.info("Reconnect attempt %d/%d ...", attempt, _MAX_RECONNECT_ATTEMPTS)
-            try:
-                params = _server_params()
-                async with stdio_client(params) as (read_stream, write_stream):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        await session.initialize()
-                        tools_result = await session.list_tools()
-                        self._tools = [
-                            {
-                                "name": t.name,
-                                "description": t.description or "",
-                                "inputSchema": t.inputSchema if hasattr(t, "inputSchema") else {},
-                            }
-                            for t in tools_result.tools
-                        ]
-                        LOG.info("Reconnected -- %d tools cached", len(self._tools))
-                        self._session = session
-                        self._session_healthy = True
-                        await self._stop_event.wait()
+        try:
+            while not self._stop_event.is_set():
+                reconnected = False
+                for attempt in range(1, _MAX_RECONNECT_ATTEMPTS + 1):
+                    if self._stop_event.is_set():
                         return
-            except Exception as exc:
-                LOG.warning("Reconnect attempt %d failed: %s", attempt, exc)
-                self._mark_stale()
-                await asyncio.sleep(_RECONNECT_DELAY)
+                    if self._session_healthy:
+                        reconnected = True
+                        break
 
-        LOG.error("All reconnect attempts exhausted.")
+                    LOG.info("Reconnect attempt %d/%d ...", attempt, _MAX_RECONNECT_ATTEMPTS)
+                    try:
+                        params = _server_params()
+                        async with stdio_client(params) as (read_stream, write_stream):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                await session.initialize()
+                                tools_result = await session.list_tools()
+                                self._tools = [
+                                    {
+                                        "name": t.name,
+                                        "description": t.description or "",
+                                        "inputSchema": t.inputSchema if hasattr(t, "inputSchema") else {},
+                                    }
+                                    for t in tools_result.tools
+                                ]
+                                LOG.info("Reconnected -- %d tools cached", len(self._tools))
+                                self._session = session
+                                self._session_healthy = True
+                                self._session_cycle_event.clear()
+                                reconnected = True
+
+                                stop_wait = asyncio.create_task(self._stop_event.wait())
+                                stale_wait = asyncio.create_task(self._session_cycle_event.wait())
+                                done, pending = await asyncio.wait(
+                                    {stop_wait, stale_wait},
+                                    return_when=asyncio.FIRST_COMPLETED,
+                                )
+                                for task in pending:
+                                    task.cancel()
+                                for task in pending:
+                                    try:
+                                        await task
+                                    except asyncio.CancelledError:
+                                        pass
+
+                                if stop_wait in done and self._stop_event.is_set():
+                                    return
+                                if stale_wait in done:
+                                    break
+                    except Exception as exc:
+                        LOG.warning("Reconnect attempt %d failed: %s", attempt, exc)
+                        self._mark_stale()
+                        await asyncio.sleep(_RECONNECT_DELAY)
+
+                if self._stop_event.is_set():
+                    return
+                if reconnected and self._session_cycle_event.is_set():
+                    continue
+                if not reconnected:
+                    LOG.error("All reconnect attempts exhausted.")
+                    return
+        finally:
+            self._reconnect_task = None
 
     async def run(self) -> None:
         PID_FILE.write_text(str(os.getpid()))
@@ -237,8 +269,8 @@ class GhostChromeProxy:
             except NotImplementedError:
                 pass
 
-        # Initial connection with auto-reconnect on failure
-        await self._reconnect_loop()
+        # Maintain the Chrome MCP session in the background and recycle it on staleness.
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
         try:
             await self._stop_event.wait()
@@ -246,6 +278,12 @@ class GhostChromeProxy:
             pass
 
         LOG.info("Shutting down...")
+        if self._reconnect_task is not None:
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
         self._session = None
         self._session_healthy = False
         await runner.cleanup()

@@ -27,6 +27,7 @@ Chrome (live browser)
 ```
 
 `ghost_stdio_proxy.py` is the MCP entrypoint. It auto-starts the daemon. Do not call `mcp_server.py` directly.
+It now retries one backend tool call automatically after reopening a stale Ghost backend session, so transient backend disconnects do not require a manual Codex retry.
 
 ## One-Time Wiring
 

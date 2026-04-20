@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import queue
 import re
 import socket
 import subprocess
 import threading
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -80,6 +83,15 @@ def _find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _proxy_is_healthy() -> bool:
+    try:
+        with urllib.request.urlopen(f"{_PROXY_URL}/health", timeout=1.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return bool(payload.get("connected"))
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+        return False
+
+
 def _resolve_chrome_path() -> str:
     for candidate in _DEFAULT_CHROME_PATHS:
         if candidate.exists():
@@ -105,9 +117,9 @@ class ChromeMcpRuntime:
     @property
     def connected(self) -> bool:
         if self.auto_connect:
-            return True
+            return _proxy_is_healthy()
         if self.browser_url:
-            return True
+            return self._worker_thread is not None and self._worker_thread.is_alive()
         return self._browser_process is not None and self._browser_process.poll() is None
 
     def _log(self, message: str, *args: Any) -> None:
