@@ -120,6 +120,66 @@ def _context_dir_for(instance_id: str) -> Path:
     return NAMED_CONTEXT_ROOT / instance_id
 
 
+def _live_chrome_devtools_port_candidates() -> tuple[Path, ...]:
+    home = Path.home()
+    if sys.platform == "darwin":
+        return (
+            home / "Library/Application Support/Google/Chrome/DevToolsActivePort",
+            home / "Library/Application Support/Google/Chrome Beta/DevToolsActivePort",
+            home / "Library/Application Support/Google/Chrome Dev/DevToolsActivePort",
+            home / "Library/Application Support/Google/Chrome Canary/DevToolsActivePort",
+        )
+    if os.name == "nt":
+        local = Path(os.environ.get("LOCALAPPDATA", str(home / "AppData/Local")))
+        return (
+            local / "Google/Chrome/User Data/DevToolsActivePort",
+            local / "Google/Chrome Beta/User Data/DevToolsActivePort",
+            local / "Google/Chrome Dev/User Data/DevToolsActivePort",
+            local / "Google/Chrome SxS/User Data/DevToolsActivePort",
+        )
+    return (
+        home / ".config/google-chrome/DevToolsActivePort",
+        home / ".config/google-chrome-beta/DevToolsActivePort",
+        home / ".config/google-chrome-unstable/DevToolsActivePort",
+        home / ".config/chromium/DevToolsActivePort",
+    )
+
+
+def _read_devtools_websocket_url(port_file: Path) -> Optional[str]:
+    try:
+        lines = [
+            line.strip()
+            for line in port_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except OSError:
+        return None
+
+    if len(lines) < 2:
+        return None
+
+    try:
+        port = int(lines[0])
+    except ValueError:
+        return None
+
+    if port <= 0 or port > 65535:
+        return None
+
+    path = lines[1]
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"ws://127.0.0.1:{port}{path}"
+
+
+def _resolve_live_chrome_ws_endpoint() -> Optional[str]:
+    for candidate in _live_chrome_devtools_port_candidates():
+        ws_url = _read_devtools_websocket_url(candidate)
+        if ws_url:
+            return ws_url
+    return None
+
+
 def _read_json(url: str, *, timeout: float = 1.0) -> Any | None:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
@@ -377,26 +437,28 @@ class GhostInstance:
 
         liquid_target = self._liquid_webview_target()
         attach_live_chrome = _is_live_chrome_attach(self.cdp_url)
-        use_direct_playwright_cdp = bool(self.cdp_url and not attach_live_chrome)
 
-        if not use_direct_playwright_cdp and liquid_target is None:
-            if self._chrome_transport is None:
-                # When no explicit CDP URL is set, default to auto_connect (proxy) instead
-                # of launching a fresh Chrome process.
-                if not attach_live_chrome and not self.cdp_url:
-                    attach_live_chrome = True
-                self._chrome_transport = ChromeTransportRuntime(
-                    instance_id=self.instance_id,
-                    context_dir=self.context_dir,
-                    browser_url=None if attach_live_chrome else self.cdp_url,
-                    auto_connect=attach_live_chrome,
-                    logger=LOGGER,
+        # Standard CLI default: attach directly to the user's current Chrome via
+        # the DevTools websocket advertised in DevToolsActivePort, not via the
+        # chrome-devtools-mcp auto-connect proxy.
+        if liquid_target is None and (attach_live_chrome or not self.cdp_url):
+            live_chrome_ws = _resolve_live_chrome_ws_endpoint()
+            if live_chrome_ws:
+                if self.cdp_url != live_chrome_ws:
+                    LOGGER.info(
+                        "Ghost instance=%s resolved live Chrome websocket target=%s",
+                        self.instance_id,
+                        live_chrome_ws,
+                    )
+                self.cdp_url = live_chrome_ws
+                attach_live_chrome = False
+            elif attach_live_chrome:
+                raise RuntimeError(
+                    "Could not resolve the live Chrome DevTools websocket. "
+                    "Enable remote debugging in chrome://inspect/#remote-debugging first."
                 )
-            await self._chrome_transport.ensure_browser()
-            self.context = None
-            self.page = None
-            self._browser = None
-            return
+
+        use_direct_playwright_cdp = bool(self.cdp_url and not attach_live_chrome)
 
         if self.context is not None:
             try:
@@ -485,8 +547,19 @@ class GhostInstance:
             if self._playwright_session_transport is not None:
                 if url:
                     await self._playwright_session_transport.goto(url)
-            if self._chrome_transport is not None:
+            elif self._chrome_transport is not None:
                 await self._chrome_transport.create_tab(url)
+            else:
+                page = await self.context.new_page()
+                self.page = page
+                if url:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(1)
+                self.page_url = page.url
+                try:
+                    self.page_title = await page.title()
+                except Exception:
+                    self.page_title = self.page_url or "none"
             self._touch()
 
     async def _get_active_page_locked(self):
@@ -1290,9 +1363,18 @@ async def _maybe_attach_default_instance_to_liquid(instance: GhostInstance) -> b
 
 
 async def _apply_attachment_arguments(instance: GhostInstance, arguments: dict[str, Any]) -> None:
+    has_existing_transport = any(
+        (
+            instance.context is not None,
+            instance._browser is not None,
+            instance._chrome_transport is not None,
+            instance._playwright_session_transport is not None,
+        )
+    )
+
     cdp_url = arguments.get("cdp_url")
     if cdp_url and isinstance(cdp_url, str):
-        if instance.cdp_url != cdp_url and instance.browser_connected:
+        if instance.cdp_url != cdp_url and has_existing_transport:
             await instance.close_browser("switching browser attachment target")
         instance.cdp_url = cdp_url
         instance.playwright_session = None
@@ -1308,7 +1390,7 @@ async def _apply_attachment_arguments(instance: GhostInstance, arguments: dict[s
                 "unsupported playwright_session. "
                 f"Allowed: {sorted(APPROVED_PLAYWRIGHT_SESSIONS)}"
             )
-        if instance.playwright_session != normalized_session and instance.browser_connected:
+        if instance.playwright_session != normalized_session and has_existing_transport:
             await instance.close_browser("switching browser attachment target")
         instance.playwright_session = normalized_session
         instance.cdp_url = None

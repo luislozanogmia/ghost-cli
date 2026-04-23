@@ -48,6 +48,10 @@ Run one command:
 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"live","limit":50}'
 ```
 
+`live-chrome` resolves to Chrome's current DevTools websocket from
+`DevToolsActivePort` and attaches directly over CDP. The supported CLI path
+does not need the Chrome MCP auto-connect proxy for this flow.
+
 `ghost-cli call` is persistent by default. It auto-starts a local Ghost daemon
 and reuses the same runtime across separate shell calls, so the same
 `instance_id` keeps its browser attach and numbered vacuum state. Use
@@ -94,7 +98,7 @@ Example REPL commands:
 - Persistent `ghost-cli call` runtime for long workflows
 - Long-lived JSON-line REPL sessions
 - Vacuum and numbered-selector workflows
-- Live Chrome attach via the Ghost runtime
+- Live Chrome attach via direct DevTools websocket CDP
 - Managed Playwright session attach for `linkedin_auth_a` and `linkedin_auth_b`
 
 ## Unsupported Model
