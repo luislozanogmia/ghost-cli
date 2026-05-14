@@ -1549,6 +1549,51 @@ async def call_tool(name: str, arguments: dict | None) -> str:
                 return result
             return json.dumps(result, ensure_ascii=False, indent=2)
 
+        if name == "ghost_extract":
+            recipe_name = arguments.get("recipe")
+            custom_script = arguments.get("script")
+            max_items = int(arguments.get("max_items", 10))
+
+            if recipe_name:
+                from helpers.extractors import get_recipe
+                js_code = get_recipe(recipe_name, max_items)
+            elif custom_script:
+                js_code = custom_script
+            else:
+                return "Error: ghost_extract requires either 'recipe' or 'script' parameter."
+
+            # Wrap in JSON.stringify to ensure clean JSON output
+            wrapped_script = f"() => JSON.stringify(({js_code}))"
+
+            await instance.ensure_browser()
+            if instance._chrome_transport is not None:
+                raw_result = await instance._chrome_transport.call_tool(
+                    "evaluate_script",
+                    {"function": wrapped_script},
+                    timeout_seconds=30.0,
+                )
+                # Chrome transport may wrap output in markdown code fences
+                import re as _re_extract
+                _m = _re_extract.search(r'```(?:json)?\s*([\s\S]*?)```', raw_result or "")
+                raw_json = _m.group(1).strip() if _m else (raw_result or "").strip()
+            elif instance._playwright_session_transport is not None:
+                raw_json = await instance._playwright_session_transport.evaluate_script(wrapped_script)
+            elif instance.context is not None:
+                page = await instance._get_active_page_locked()
+                raw_json = await page.evaluate(wrapped_script)
+            else:
+                return "Error: No browser connected. Call ghost_vacuum first."
+
+            # Parse and re-serialize for clean, indented JSON output
+            try:
+                parsed = json.loads(raw_json)
+                # Handle double-encoded JSON strings
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                return json.dumps(parsed, indent=2, ensure_ascii=False)
+            except (json.JSONDecodeError, TypeError):
+                return str(raw_json)
+
         if name == "ghost_save_auth":
             result = await instance.save_auth()
             return result

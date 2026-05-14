@@ -71,6 +71,7 @@ See [FUNCTIONALITY.md](/Users/luis.lozano/.codex/skills/ghost-cli/FUNCTIONALITY.
 | `ghost_more` | Scroll / load more elements (`offset=N` to skip ahead) |
 | `ghost_screenshot` | Take a screenshot for visual verification |
 | `ghost_save_auth` | Save current browser cookies to disk; call immediately after manual login |
+| `ghost_extract` | Extract structured data using a named recipe or custom JS. Returns clean JSON. |
 | `ghost_instance_create` | Create or reuse a named Chrome session, optionally navigating to a URL |
 | `ghost_instance_list` | List all active named sessions |
 | `ghost_instance_close` | Close a named session without deleting its profile |
@@ -113,6 +114,53 @@ Managed Playwright session attach:
 ```
 
 4. Re-vacuum after any navigation. Element numbers reset on every new page state, but persistent `call` keeps the same cache across shell invocations for the same `instance_id`.
+
+## Extraction Recipes
+
+Ghost includes pre-built extraction recipes for common page patterns. These run
+JS in the browser and return clean JSON -- no DOM noise reaches your context.
+
+### LinkedIn Search Results
+```text
+./ghost-cli call ghost_extract --arguments '{"instance_id":"li","recipe":"linkedin_search","max_items":10}'
+```
+Returns: `[{url, name, title, location, snippet}, ...]`
+
+### LinkedIn Profile
+```text
+./ghost-cli call ghost_extract --arguments '{"instance_id":"li","recipe":"linkedin_profile"}'
+```
+Returns: `{name, headline, location, about, experiences, education}`
+
+### All Page Links
+```text
+./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","recipe":"page_links","max_items":20}'
+```
+Returns: `[{text, href}, ...]`
+
+### Page Metadata
+```text
+./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","recipe":"page_meta"}'
+```
+Returns: `{title, url, description, og_title, og_image, canonical, h1}`
+
+### Custom Extraction
+```text
+./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","script":"() => [...document.querySelectorAll(\"h2\")].map(e => e.textContent)"}'
+```
+
+## Batch Extraction
+
+Extract data from multiple URLs in one command:
+
+```text
+./ghost-cli batch --queries '[{"url":"https://linkedin.com/search/results/people/?keywords=fintech+austin","label":"fintech_austin","recipe":"linkedin_search"}]' --delay 4 --output results.json
+```
+
+Or from a file:
+```text
+./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json
+```
 
 ## Multi-Session Pattern
 Use when you need two independent browser sessions simultaneously:

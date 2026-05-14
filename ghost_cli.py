@@ -254,6 +254,105 @@ def cmd_repl(_args) -> None:
     asyncio.run(_run())
 
 
+def cmd_batch(args) -> None:
+    """Batch extraction: navigate to N URLs and extract data from each."""
+    async def _run() -> None:
+        from helpers.extractors import get_recipe
+
+        # Load queries
+        queries_raw = args.queries
+        if os.path.isfile(queries_raw):
+            with open(queries_raw) as f:
+                queries = json.load(f)
+        else:
+            queries = json.loads(queries_raw)
+
+        if not isinstance(queries, list):
+            print(json.dumps({"ok": False, "error": "Queries must be a JSON array"}, ensure_ascii=False))
+            return
+
+        await _ensure_daemon()
+        instance_id = args.instance_id or "batch"
+        delay = args.delay
+        max_items = args.max_items
+
+        # Ensure instance exists
+        await _daemon_request({
+            "type": "call_tool",
+            "tool": "ghost_instance_create",
+            "arguments": {"instance_id": instance_id},
+        })
+
+        results = {}
+        total = len(queries)
+        for i, entry in enumerate(queries):
+            label = entry.get("label", entry.get("company", f"query_{i}"))
+            url = entry.get("url", "")
+            recipe = entry.get("recipe", args.recipe)
+            script = entry.get("script")
+
+            if not url:
+                results[label] = {"error": "no URL provided"}
+                continue
+
+            print(f"[{i+1}/{total}] {label}: {url}", file=sys.stderr)
+
+            # Navigate
+            await _daemon_request({
+                "type": "call_tool",
+                "tool": "ghost_eval",
+                "arguments": {
+                    "instance_id": instance_id,
+                    "script": f'() => {{ location.href = "{url}"; return "navigating"; }}',
+                },
+            })
+
+            # Wait for page load
+            await asyncio.sleep(delay)
+
+            # Extract
+            if recipe:
+                js_code = get_recipe(recipe, max_items)
+            elif script:
+                js_code = script
+            else:
+                js_code = "document.title"
+
+            response = await _daemon_request({
+                "type": "call_tool",
+                "tool": "ghost_eval",
+                "arguments": {
+                    "instance_id": instance_id,
+                    "script": f"() => JSON.stringify(({js_code}))",
+                },
+            })
+
+            raw = str(response.get("text", ""))
+            try:
+                parsed = json.loads(raw)
+                results[label] = {"url": url, "data": parsed}
+                item_count = len(parsed) if isinstance(parsed, list) else 1
+                print(f"  -> {item_count} items extracted", file=sys.stderr)
+            except (json.JSONDecodeError, TypeError):
+                results[label] = {"url": url, "raw": raw}
+                print(f"  -> raw output (not JSON)", file=sys.stderr)
+
+            # Rate limit
+            if i < total - 1:
+                await asyncio.sleep(1)  # small extra delay between navigations
+
+        # Output
+        output_json = json.dumps(results, indent=2, ensure_ascii=False)
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(output_json)
+            print(f"\nResults written to {args.output}", file=sys.stderr)
+        else:
+            print(output_json)
+
+    asyncio.run(_run())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ghost-cli",
@@ -296,6 +395,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_daemon_stop = sub.add_parser("daemon-stop", help="Ask the persistent Ghost CLI daemon to shut down cleanly.")
     p_daemon_stop.set_defaults(func=cmd_daemon_stop)
+
+    p_batch = sub.add_parser("batch", help="Batch extract data from multiple URLs.")
+    p_batch.add_argument("--queries", required=True, help="JSON file or inline JSON array of {url, recipe?, script?, label?}")
+    p_batch.add_argument("--recipe", default=None, help="Default recipe to use for all URLs (e.g. 'linkedin_search')")
+    p_batch.add_argument("--output", "-o", default=None, help="Output JSON file path")
+    p_batch.add_argument("--delay", type=int, default=4, help="Seconds between navigations (default: 4)")
+    p_batch.add_argument("--max-items", type=int, default=10, help="Max items per extraction (default: 10)")
+    p_batch.add_argument("--instance-id", default=None, help="Ghost instance to use (default: 'batch')")
+    p_batch.set_defaults(func=cmd_batch)
 
     return parser
 

@@ -242,4 +242,43 @@ def get_ghost_tools() -> list[ToolDef]:
                 },
             },
         ),
+        ToolDef(
+            name="ghost_extract",
+            description=(
+                "Extract structured data from the current page using a named recipe or custom JS. "
+                "Unlike ghost_eval, this tool ALWAYS returns parsed JSON and strips noise. "
+                "Use for data extraction tasks (profiles, search results, lists, tables). "
+                "Built-in recipes: 'linkedin_search', 'linkedin_profile', 'page_links', 'page_meta'. "
+                "Or pass a custom JS function that returns a JSON-serializable value."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "recipe": {
+                        "type": "string",
+                        "description": (
+                            "Named extraction recipe. Built-in: "
+                            "'linkedin_search' (profiles from search results), "
+                            "'linkedin_profile' (single profile data), "
+                            "'page_links' (all links with text and href), "
+                            "'page_meta' (title, description, og tags). "
+                            "Omit to use custom JS via 'script' parameter."
+                        ),
+                    },
+                    "script": {
+                        "type": "string",
+                        "description": (
+                            "Custom JS function returning JSON-serializable data. "
+                            "Result is automatically JSON.stringify'd. "
+                            "Example: '() => [...document.querySelectorAll(\"h2\")].map(e => e.textContent)'"
+                        ),
+                    },
+                    "max_items": {
+                        "type": "integer",
+                        "description": "Limit number of extracted items (default: 10).",
+                    },
+                },
+            },
+        ),
     ]

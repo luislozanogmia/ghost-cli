@@ -37,6 +37,8 @@ menus remain valid as long as you keep using the same `instance_id`.
 | `ghost_eval` | `./ghost-cli call ghost_eval --arguments '{"instance_id":"demo","script":"() => document.title"}'` | Runs page JS. |
 | `ghost_screenshot` | `./ghost-cli call ghost_screenshot --arguments '{"instance_id":"demo","full_page":true}'` | Saves a screenshot to disk. |
 | `ghost_save_auth` | `./ghost-cli call ghost_save_auth --arguments '{"instance_id":"demo"}'` | Persists browser auth. |
+| `ghost_extract` | `./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","recipe":"linkedin_search","max_items":10}'` | Structured data extraction with pre-built recipes. |
+| `batch` | `./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json` | Multi-URL batch extraction. |
 
 Daemon controls:
 
