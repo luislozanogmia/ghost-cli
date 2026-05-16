@@ -128,6 +128,18 @@ All errors return a machine-readable format: `Error [CODE]: message`
 | `FILL_REQUIRED` | Textbox/searchbox needs a `value` argument |
 | `INSTANCE_NOT_FOUND` | Named instance doesn't exist |
 
+## AI Agent Tips
+
+These behaviors trip up fresh agents. Know them before your first session:
+
+- **Always re-vacuum after navigation.** Element numbers are only valid for the current page state. If you click a link or the page reloads, your old numbers are stale -- `ghost_vacuum` again before clicking.
+- **Use `limit` to reduce noise.** Dense pages (LinkedIn, dashboards) return 80+ elements. Set `"limit": 20` or `"limit": 30` to get the most relevant items without drowning in nav/footer/ad elements.
+- **Sleep between profile visits.** Ghost has no built-in rate limiter. If you're visiting 10+ pages in sequence on LinkedIn or similar sites, add 3-5 second pauses between calls to avoid triggering anti-bot detection.
+- **`ghost_read` for content, `ghost_vacuum` for interaction.** If you just need to check whether a word appears on the page, use `ghost_read` -- it returns clean text without the numbered element overhead.
+- **One instance per workflow.** Don't create a new instance for every call. Keep the same `instance_id` throughout -- it preserves browser state, cookies, and vacuum cache.
+- **Save auth immediately after manual login.** The human logs in once, you call `ghost_save_auth`, and that session persists across daemon restarts.
+- **Headless for delegation.** When spawning sub-agents that need browser access, use `"headless": true` so they get their own isolated Chromium without touching the user's Chrome.
+
 ## Extraction Recipes
 
 Built-in recipes for `ghost_extract`:
@@ -164,6 +176,20 @@ Batch extraction across multiple URLs:
 ```bash
 ./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json
 ```
+
+## Known Limitations & Roadmap
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Vacuum output lacks semantic filtering (no "only show profile cards" mode) | Planned |
+| 2 | No built-in rate limiting or anti-detection pacing between requests | Planned |
+| 3 | Error messages don't suggest recovery actions (e.g. "re-vacuum first") | Planned |
+| 4 | No text search primitive (`ghost_find_text` or `ghost_grep` for page content) | Planned |
+| 5 | Screenshots return path only -- no text description for non-multimodal agents | Planned |
+| 6 | No scroll-to-element by text/selector (only blind `ghost_more`) | Planned |
+| 7 | Stale instances don't auto-expire -- manual cleanup required | Planned |
+
+Contributions welcome. Open an issue to discuss before sending PRs.
 
 ## Architecture
 

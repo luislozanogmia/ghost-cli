@@ -1491,6 +1491,63 @@ class GhostInstance:
             self._touch()
             return result
 
+    async def find_text(self, query: str, max_results: int = 5, context_chars: int = 100) -> str:
+        """Search page text for a pattern, return matches with context."""
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            import re as _re
+
+            if self._chrome_transport is not None:
+                raw = await self._chrome_transport.call_tool(
+                    "evaluate_script",
+                    {"function": "() => document.body?.innerText || ''"},
+                    timeout_seconds=15.0,
+                )
+                _m = _re.search(r'```(?:\w+)?\s*([\s\S]*?)```', raw or "")
+                text = _m.group(1).strip() if _m else (raw or "").strip()
+            elif self._playwright_session_transport is not None:
+                text = await self._playwright_session_transport.evaluate_script(
+                    "() => document.body?.innerText || ''"
+                )
+            elif self.context is not None:
+                page = await self._get_active_page_locked()
+                text = await page.evaluate("() => document.body?.innerText || ''")
+            else:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
+
+            if not isinstance(text, str):
+                text = str(text) if text else ""
+            if not text:
+                return "No text content found on page."
+
+            try:
+                pattern = _re.compile(query, _re.IGNORECASE)
+            except _re.error:
+                pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+
+            matches = []
+            for m in pattern.finditer(text):
+                start = max(0, m.start() - context_chars)
+                end = min(len(text), m.end() + context_chars)
+                snippet = text[start:end].strip()
+                if start > 0:
+                    snippet = "..." + snippet
+                if end < len(text):
+                    snippet = snippet + "..."
+                matches.append(snippet)
+                if len(matches) >= max_results:
+                    break
+
+            self._touch()
+
+            if not matches:
+                return f"No matches found for '{query}' on this page."
+
+            header = f"Found {len(matches)} match(es) for '{query}':\n\n"
+            body = "\n---\n".join(f"[{i+1}] {m}" for i, m in enumerate(matches))
+            return header + body
+
     # -------------------------------------------------------------------
     # Improvement #4: ghost_scroll -- scroll and re-vacuum
     # -------------------------------------------------------------------
@@ -1523,7 +1580,7 @@ class GhostInstance:
                 page = await self._get_active_page_locked()
                 await page.evaluate(scroll_js)
             else:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             # Wait for lazy content to load
             await asyncio.sleep(wait_secs)
@@ -1546,7 +1603,7 @@ class GhostInstance:
                 return "Tab management not supported on Playwright session instances. Use separate Ghost instances instead."
 
             if self.context is None:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             pages = self.context.pages
             current_page = self.page
@@ -1572,7 +1629,7 @@ class GhostInstance:
                 return "Tab management not supported on this transport. Use separate Ghost instances instead."
 
             if self.context is None:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             new_page = await self.context.new_page()
             if url:
@@ -1603,7 +1660,7 @@ class GhostInstance:
                 return "Tab management not supported on this transport. Use separate Ghost instances instead."
 
             if self.context is None:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             pages = self.context.pages
             if tab_index < 0 or tab_index >= len(pages):
@@ -1636,7 +1693,7 @@ class GhostInstance:
                 return "Tab management not supported on this transport. Use separate Ghost instances instead."
 
             if self.context is None:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             pages = self.context.pages
             if tab_index < 0 or tab_index >= len(pages):
@@ -1702,7 +1759,7 @@ class GhostInstance:
                 return f"Pressed '{key}'" + (f" x{repeat}" if repeat > 1 else "")
 
             if self.context is None:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             page = await self._get_active_page_locked()
             target = self._active_frame or page
@@ -1728,7 +1785,7 @@ class GhostInstance:
                 return "Iframe management not supported on Chrome/Playwright transport. Use ghost_eval to interact with iframe content."
 
             if self.context is None:
-                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Create an instance with ghost_instance_create first, or check ghost_status.")
 
             page = await self._get_active_page_locked()
 
@@ -2030,6 +2087,19 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             return json.dumps(payload, indent=2)
 
         if name == "ghost_instance_list":
+            from datetime import timezone, timedelta
+            expire_threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
+            expired = []
+            for inst in await _list_instances():
+                try:
+                    last = datetime.fromisoformat(inst.last_used_at.replace("Z", "+00:00"))
+                    if last < expire_threshold and not inst.browser_connected:
+                        expired.append(inst.instance_id)
+                except (ValueError, AttributeError):
+                    pass
+            for eid in expired:
+                await _close_instance(eid, "auto-expired after 30 min idle")
+
             statuses = []
             active_http_sessions = _shared_session_count()
             for instance in await _list_instances():
@@ -2047,7 +2117,7 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             instance = await _get_instance(requested_instance_id)
             if instance is None:
                 normalized = _normalize_instance_id(requested_instance_id)
-                return f"Error: Instance '{normalized}' does not exist."
+                return GhostError.fmt(GhostError.INSTANCE_NOT_FOUND, f"Instance '{normalized}' does not exist. Call ghost_instance_list to see available instances.")
 
             previous_status = await instance.status(_shared_session_count())
             await _close_instance(instance.instance_id, "instance closed by tool call")
@@ -2059,6 +2129,7 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             return json.dumps(payload, indent=2)
 
         instance, _ = await _get_or_create_instance(arguments.get("instance_id"))
+        instance.last_used_at = _now_iso()
         await _apply_attachment_arguments(instance, arguments)
 
         if name == "ghost_vacuum":
@@ -2109,6 +2180,15 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             max_chars = int(arguments.get("max_chars", 8000))
             selector = arguments.get("selector")
             result = await instance.read_page(url=url, max_chars=max_chars, selector=selector)
+            return result
+
+        if name == "ghost_find_text":
+            query = arguments.get("query")
+            if not query or not isinstance(query, str):
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'query' is required and must be a string.")
+            max_results = int(arguments.get("max_results", 5))
+            context_chars = int(arguments.get("context_chars", 100))
+            result = await instance.find_text(query=query, max_results=max_results, context_chars=context_chars)
             return result
 
         # Improvement #4: ghost_scroll

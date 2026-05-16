@@ -344,6 +344,33 @@ def get_ghost_tools() -> list[ToolDef]:
                 },
             },
         ),
+        ToolDef(
+            name="ghost_find_text",
+            description=(
+                "Search the current page for a text string or regex pattern. "
+                "Returns matches with surrounding context. Use this instead of "
+                "ghost_vacuum when you just need to check if specific content exists on the page."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "query": {
+                        "type": "string",
+                        "description": "Text or regex pattern to search for on the page.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of matches to return (default: 5).",
+                    },
+                    "context_chars": {
+                        "type": "integer",
+                        "description": "Characters of surrounding context per match (default: 100).",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
         # ---------------------------------------------------------------
         # Improvement #4: ghost_scroll -- scroll and re-vacuum for lazy content
         # ---------------------------------------------------------------
