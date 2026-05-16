@@ -1,15 +1,17 @@
 """
 Ghost Extractors -- pre-built JS extraction recipes for common page patterns.
 
-Each recipe is a JS function string that returns JSON-serializable data.
-Recipes are designed to be context-efficient: they extract ONLY the structured
-data needed, filtering out DOM noise before it reaches the LLM.
+Each recipe is a JS function that returns a FORMATTED STRING, not JSON.
+Output follows the same numbered-menu pattern as ghost_vacuum so the LLM
+gets a consistent interface: read the list, pick a number or URL, act.
+
+ghost_eval remains the escape hatch for raw JS when you need structured data.
 """
 
 RECIPES: dict[str, str] = {
     "linkedin_search": r"""
 (() => {
-    const results = [];
+    const profiles = [];
     const cards = document.querySelectorAll(
         'li.reusable-search__result-container, div[data-chameleon-result-urn], div.entity-result'
     );
@@ -30,23 +32,33 @@ RECIPES: dict[str, str] = {
         const locationEl = card.querySelector('.entity-result__secondary-subtitle');
         const location = (locationEl ? locationEl.innerText : '').trim();
         const snippetEl = card.querySelector('.entity-result__summary');
-        const snippet = (snippetEl ? snippetEl.innerText : '').replace(/\s+/g, ' ').trim();
-        results.push({ url, name, title, location, snippet });
+        const snippet = (snippetEl ? snippetEl.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        profiles.push({ url, name, title, location, snippet });
     });
-    // Fallback: if no cards found, try generic profile link extraction
-    if (results.length === 0) {
+    // Fallback: generic profile link scan
+    if (profiles.length === 0) {
         document.querySelectorAll('a[href*="/in/"]').forEach(a => {
             const url = a.href.split('?')[0];
             if (seen.has(url)) return;
             seen.add(url);
             const container = a.closest('li, div[class*="result"]');
             const context = container
-                ? container.innerText.replace(/\s+/g, ' ').slice(0, 200)
-                : a.innerText.slice(0, 100);
-            results.push({ url, name: a.innerText.trim(), title: '', location: '', snippet: context.trim() });
+                ? container.innerText.replace(/\s+/g, ' ').slice(0, 150)
+                : a.innerText.slice(0, 80);
+            profiles.push({ url, name: a.innerText.trim(), title: '', location: '', snippet: context.trim() });
         });
     }
-    return results.slice(0, MAX_ITEMS);
+    const items = profiles.slice(0, MAX_ITEMS);
+    if (items.length === 0) return '(no profiles found on this page)';
+    const lines = items.map((p, i) => {
+        let line = `  [${i+1}] ${p.name}`;
+        if (p.title) line += ` -- ${p.title}`;
+        line += `\n       ${p.url}`;
+        if (p.location) line += ` | ${p.location}`;
+        if (p.snippet) line += `\n       ${p.snippet}`;
+        return line;
+    });
+    return `=== LinkedIn Search: ${items.length} profiles ===\nURL: ${location.href}\n\n` + lines.join('\n\n') + '\n';
 })()
 """,
 
@@ -56,31 +68,60 @@ RECIPES: dict[str, str] = {
         const el = document.querySelector(sel);
         return el ? el.innerText.trim() : '';
     };
-    const name = get('h1') || get('.text-heading-xlarge');
+    const name = get('h1') || get('.text-heading-xlarge') || '(unknown)';
     const headline = get('.text-body-medium.break-words') || get('.pv-top-card--list li');
-    const location = get('.text-body-small.inline.t-black--light.break-words');
-    const about = get('#about ~ div .inline-show-more-text') || get('section.pv-about-section p');
-    const experiences = [];
+    const loc = get('.text-body-small.inline.t-black--light.break-words');
+    const about = (get('#about ~ div .inline-show-more-text') || get('section.pv-about-section p')).slice(0, 400);
+    const url = location.href.split('?')[0];
+
+    let out = `=== ${name} ===\n${url}\n`;
+    if (headline) out += `${headline}\n`;
+    if (loc) out += `${loc}\n`;
+    out += '\n';
+    if (about) out += `${about}\n\n`;
+
+    // Experience
+    const exps = [];
     document.querySelectorAll('#experience ~ div ul > li, section[id*="experience"] li').forEach(li => {
         const role = (li.querySelector('.t-bold span') || li.querySelector('.pv-entity__summary-info h3') || {}).innerText || '';
         const company = (li.querySelector('.t-normal span') || li.querySelector('.pv-entity__secondary-title') || {}).innerText || '';
         const dates = (li.querySelector('.pvs-entity__caption-wrapper') || li.querySelector('.pv-entity__date-range span:nth-child(2)') || {}).innerText || '';
-        if (role || company) experiences.push({ role: role.trim(), company: company.trim(), dates: dates.trim() });
+        if (role || company) exps.push({ role: role.trim(), company: company.trim(), dates: dates.trim() });
     });
-    const education = [];
+    if (exps.length > 0) {
+        out += 'Experience:\n';
+        exps.slice(0, 5).forEach((e, i) => {
+            out += `  [${i+1}] ${e.role}`;
+            if (e.company) out += ` -- ${e.company}`;
+            if (e.dates) out += ` (${e.dates})`;
+            out += '\n';
+        });
+        out += '\n';
+    }
+
+    // Education
+    const edu = [];
     document.querySelectorAll('#education ~ div ul > li, section[id*="education"] li').forEach(li => {
         const school = (li.querySelector('.t-bold span') || li.querySelector('.pv-entity__school-name') || {}).innerText || '';
         const degree = (li.querySelector('.t-normal span') || {}).innerText || '';
-        if (school) education.push({ school: school.trim(), degree: degree.trim() });
+        if (school) edu.push({ school: school.trim(), degree: degree.trim() });
     });
-    return { name, headline, location, about: about.slice(0, 500), experiences: experiences.slice(0, 5), education: education.slice(0, 3) };
+    if (edu.length > 0) {
+        out += 'Education:\n';
+        edu.slice(0, 3).forEach((e, i) => {
+            out += `  [${i+1}] ${e.school}`;
+            if (e.degree) out += ` -- ${e.degree}`;
+            out += '\n';
+        });
+    }
+    return out;
 })()
 """,
 
     "page_links": r"""
 (() => {
     const seen = new Set();
-    return [...document.querySelectorAll('a[href]')]
+    const links = [...document.querySelectorAll('a[href]')]
         .filter(a => {
             const href = a.href;
             if (!href || href.startsWith('javascript:') || seen.has(href)) return false;
@@ -89,9 +130,14 @@ RECIPES: dict[str, str] = {
         })
         .slice(0, MAX_ITEMS)
         .map(a => ({
-            text: a.innerText.replace(/\s+/g, ' ').trim().slice(0, 100),
+            text: a.innerText.replace(/\s+/g, ' ').trim().slice(0, 80),
             href: a.href,
         }));
+    if (links.length === 0) return '(no links found)';
+    const lines = links.map((l, i) =>
+        `  [${i+1}] ${l.text || '(no text)'}` + `\n       ${l.href}`
+    );
+    return `=== Links: ${links.length} found ===\nURL: ${location.href}\n\n` + lines.join('\n') + '\n';
 })()
 """,
 
@@ -101,15 +147,22 @@ RECIPES: dict[str, str] = {
         const el = document.querySelector(sel);
         return el ? (el.content || el.innerText || '').trim() : '';
     };
-    return {
-        title: document.title,
-        url: location.href,
-        description: get('meta[name="description"]') || get('meta[property="og:description"]'),
-        og_title: get('meta[property="og:title"]'),
-        og_image: get('meta[property="og:image"]'),
-        canonical: get('link[rel="canonical"]'),
-        h1: (document.querySelector('h1') || {}).innerText || '',
-    };
+    const title = document.title || '(none)';
+    const desc = get('meta[name="description"]') || get('meta[property="og:description"]') || '(none)';
+    const ogTitle = get('meta[property="og:title"]');
+    const ogImage = get('meta[property="og:image"]');
+    const canonical = get('link[rel="canonical"]');
+    const h1 = (document.querySelector('h1') || {}).innerText || '(none)';
+
+    let out = `=== Page Meta ===\n`;
+    out += `URL: ${location.href}\n`;
+    out += `Title: ${title}\n`;
+    out += `H1: ${h1}\n`;
+    out += `Description: ${desc}\n`;
+    if (ogTitle) out += `OG Title: ${ogTitle}\n`;
+    if (ogImage) out += `OG Image: ${ogImage}\n`;
+    if (canonical) out += `Canonical: ${canonical}\n`;
+    return out;
 })()
 """,
 }

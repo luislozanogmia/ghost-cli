@@ -1,56 +1,247 @@
-# Ghost Functionality
+# Ghost CLI -- Full Command Reference
 
 Primary interface: `./ghost-cli`
 
-The old Ghost server path is no longer supported for production use. The
-direct CLI runtime exposes the same browser actions without the shared HTTP
-daemon and backend-session reconnect layer that kept disconnecting during long
-runs.
+## CLI Subcommands
 
-The supported CLI path no longer requires the Python `mcp` package.
+| Command | Usage | Notes |
+|---------|-------|-------|
+| `list-tools` | `./ghost-cli list-tools` | Print all available Ghost tools as JSON |
+| `call` | `./ghost-cli call <tool> --arguments '{...}'` | Invoke a tool via the persistent daemon |
+| `repl` | `./ghost-cli repl` | Interactive JSON-line session |
+| `daemon-status` | `./ghost-cli daemon-status` | Check persistent daemon health |
+| `daemon-stop` | `./ghost-cli daemon-stop` | Shut down the daemon |
+| `batch` | `./ghost-cli batch --queries <file> --recipe <name> --output <file>` | Multi-URL extraction |
 
-Archived legacy server files live under `deprecated/mcp/`.
+### `call` flags
 
-Non-core parsing and bridge utilities live under `helpers/`.
+| Flag | Effect |
+|------|--------|
+| `--arguments '{"key":"val"}'` | JSON arguments for the tool |
+| `--json` | Output as JSON envelope instead of raw text |
+| `--ephemeral` | Run in-process (no daemon), discard state after |
+| `--headless` | Inject `headless: true` into `ghost_instance_create` |
 
-The supported CLI path can attach to:
-- `live-chrome` for the user’s open Chrome
-- explicit `cdp_url` targets
-- managed Playwright sessions `linkedin_auth_a` and `linkedin_auth_b`
+## Tool Reference
 
-`ghost-cli call` is persistent by default. It auto-starts a local daemon and
-reuses the same in-memory runtime across separate shell calls, so numbered
-menus remain valid as long as you keep using the same `instance_id`.
+### ghost_instance_create
 
-## Tool Parity
+Create or reuse a named browser instance.
 
-| Former tool | CLI form | Notes |
-|---|---|---|
-| `ghost_instance_create` | `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"demo","cdp_url":"live-chrome"}'` | Creates or reuses a named instance. |
-| `ghost_instance_create` | `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}'` | Attaches to an existing managed Playwright LinkedIn session. |
-| `ghost_instance_list` | `./ghost-cli call ghost_instance_list` | Lists known instances and current state. |
-| `ghost_instance_close` | `./ghost-cli call ghost_instance_close --arguments '{"instance_id":"demo"}'` | Closes one named instance. |
-| `ghost_status` | `./ghost-cli call ghost_status --arguments '{"instance_id":"demo"}'` | Returns connection and cache status. |
-| `ghost_vacuum` | `./ghost-cli call ghost_vacuum --arguments '{"instance_id":"demo","limit":50}'` | Produces numbered menu output. |
-| `ghost_more` | `./ghost-cli call ghost_more --arguments '{"instance_id":"demo","offset":50}'` | Pages through cached vacuum output. |
-| `ghost_click` | `./ghost-cli call ghost_click --arguments '{"instance_id":"demo","choice":17}'` | Executes a numbered action and re-vacuums. |
-| `ghost_eval` | `./ghost-cli call ghost_eval --arguments '{"instance_id":"demo","script":"() => document.title"}'` | Runs page JS. |
-| `ghost_screenshot` | `./ghost-cli call ghost_screenshot --arguments '{"instance_id":"demo","full_page":true}'` | Saves a screenshot to disk. |
-| `ghost_save_auth` | `./ghost-cli call ghost_save_auth --arguments '{"instance_id":"demo"}'` | Persists browser auth. |
-| `ghost_extract` | `./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","recipe":"linkedin_search","max_items":10}'` | Structured data extraction with pre-built recipes. |
-| `batch` | `./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json` | Multi-URL batch extraction. |
+```bash
+./ghost-cli call ghost_instance_create --arguments '{
+  "instance_id": "worker",
+  "headless": true,
+  "url": "https://example.com"
+}'
+```
 
-Daemon controls:
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | auto-generated | Named instance identifier |
+| `headless` | bool | `false` | Launch isolated headless Chromium (skips Chrome auto-attach) |
+| `open_browser` | bool | `true` | Open browser on creation |
+| `url` | string | -- | Navigate immediately after creation |
+| `cdp_url` | string | -- | Attach to external browser (`"live-chrome"` for user's Chrome) |
+| `playwright_session` | string | -- | Attach to managed Playwright session |
+| `reuse_only` | bool | `false` | Fail if instance doesn't already exist |
 
-| Command | CLI form | Notes |
-|---|---|---|
-| `daemon-status` | `./ghost-cli daemon-status` | Shows whether the persistent local daemon is up. |
-| `daemon-stop` | `./ghost-cli daemon-stop` | Asks the persistent local daemon to shut down cleanly. |
+### ghost_vacuum
 
-## Long-Lived Agent Mode
+Navigate and extract numbered interactive element menu.
 
-For agentic browsing, either reuse persistent `call` with the same
-`instance_id`, or use a single long-lived CLI session:
+```bash
+./ghost-cli call ghost_vacuum --arguments '{"url":"https://example.com","limit":30,"wait":"networkidle"}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `url` | string | -- | Navigate before vacuuming |
+| `limit` | int | 50 | Max elements per page |
+| `wait` | enum | `load` | Wait strategy: `load`, `networkidle`, `none` |
+
+### ghost_click
+
+Execute a numbered action and auto re-vacuum.
+
+```bash
+./ghost-cli call ghost_click --arguments '{"choice":5,"value":"search query","wait":"networkidle"}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `choice` | int | **required** | Menu element number |
+| `value` | string | -- | Text for input/search fields |
+| `wait` | enum | `load` | Wait strategy after click |
+
+### ghost_more
+
+Paginate through cached vacuum results.
+
+```bash
+./ghost-cli call ghost_more --arguments '{"offset":50}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `offset` | int | auto | Start element offset |
+
+### ghost_read
+
+Extract clean readable text from the page (reader mode).
+
+```bash
+./ghost-cli call ghost_read --arguments '{"url":"https://example.com","max_chars":4000,"selector":"article"}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `url` | string | -- | Navigate before reading |
+| `max_chars` | int | 8000 | Truncate output |
+| `selector` | string | auto-detect | CSS selector to scope reading |
+
+### ghost_scroll
+
+Scroll page to load lazy content, then re-vacuum.
+
+```bash
+./ghost-cli call ghost_scroll --arguments '{"direction":"down","wait":2.0}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `direction` | enum | `down` | `down`, `up`, `bottom`, `top` |
+| `pixels` | int | -- | Exact scroll amount (overrides direction) |
+| `wait` | number | 2.0 | Seconds to wait for lazy content |
+
+### ghost_tab_list
+
+List all open tabs in a browser instance.
+
+```bash
+./ghost-cli call ghost_tab_list --arguments '{"instance_id":"demo"}'
+```
+
+### ghost_tab_open
+
+Open a new tab.
+
+```bash
+./ghost-cli call ghost_tab_open --arguments '{"url":"https://example.com"}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `url` | string | -- | URL to open in the new tab |
+
+### ghost_tab_switch
+
+Switch active tab by index and auto-vacuum.
+
+```bash
+./ghost-cli call ghost_tab_switch --arguments '{"tab_index":0}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `tab_index` | int | **required** | Zero-based tab index |
+
+### ghost_tab_close
+
+Close a tab by index.
+
+```bash
+./ghost-cli call ghost_tab_close --arguments '{"tab_index":1}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `tab_index` | int | **required** | Zero-based tab index |
+
+### ghost_screenshot
+
+Capture page screenshot. Optionally scroll to element first.
+
+```bash
+./ghost-cli call ghost_screenshot --arguments '{"inline":true,"full_page":false}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `element` | int | -- | Scroll to menu element before capture |
+| `full_page` | bool | `false` | Capture entire page vs viewport |
+| `inline` | bool | `false` | Return base64 data instead of file path |
+
+### ghost_eval
+
+Run JavaScript on the current page.
+
+```bash
+./ghost-cli call ghost_eval --arguments '{"script":"() => document.title"}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `script` | string | **required** | JS arrow function to evaluate |
+
+### ghost_extract
+
+Structured extraction with built-in or custom recipes.
+
+```bash
+./ghost-cli call ghost_extract --arguments '{"recipe":"page_links","max_items":20}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `instance_id` | string | default | Target instance |
+| `recipe` | string | -- | Built-in: `linkedin_search`, `linkedin_profile`, `page_links`, `page_meta` |
+| `script` | string | -- | Custom JS extraction function |
+| `max_items` | int | 10 | Limit extracted items |
+
+### ghost_status
+
+Show instance connection and cache state.
+
+```bash
+./ghost-cli call ghost_status --arguments '{"instance_id":"demo"}'
+```
+
+### ghost_save_auth
+
+Export browser cookies to persist sessions across restarts.
+
+```bash
+./ghost-cli call ghost_save_auth --arguments '{"instance_id":"demo"}'
+```
+
+### ghost_instance_list
+
+List all known instances and their state.
+
+```bash
+./ghost-cli call ghost_instance_list
+```
+
+### ghost_instance_close
+
+Close and unregister a named instance.
+
+```bash
+./ghost-cli call ghost_instance_close --arguments '{"instance_id":"demo"}'
+```
+
+## REPL Mode
 
 ```bash
 ./ghost-cli repl
@@ -59,23 +250,36 @@ For agentic browsing, either reuse persistent `call` with the same
 Send one JSON command per line:
 
 ```json
-{"tool":"ghost_instance_create","arguments":{"instance_id":"live","cdp_url":"live-chrome"}}
-{"tool":"ghost_vacuum","arguments":{"instance_id":"live","limit":50}}
-{"tool":"ghost_click","arguments":{"instance_id":"live","choice":16}}
-```
-
-Managed Playwright session example:
-
-```json
-{"tool":"ghost_instance_create","arguments":{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}}
-{"tool":"ghost_vacuum","arguments":{"instance_id":"li-b","url":"https://www.linkedin.com/feed/","limit":20}}
-{"tool":"ghost_eval","arguments":{"instance_id":"li-b","script":"() => ({title: document.title, href: location.href})"}}
+{"tool":"ghost_instance_create","arguments":{"instance_id":"live"}}
+{"tool":"ghost_vacuum","arguments":{"url":"https://news.ycombinator.com","limit":30}}
+{"tool":"ghost_click","arguments":{"choice":5,"wait":"networkidle"}}
+{"tool":"ghost_read","arguments":{"max_chars":2000}}
+{"tool":"ghost_tab_open","arguments":{"url":"https://example.com"}}
+{"tool":"ghost_tab_list","arguments":{}}
+{"tool":"ghost_tab_switch","arguments":{"tab_index":0}}
+{"tool":"ghost_scroll","arguments":{"direction":"down"}}
 ```
 
 Each line returns a JSON envelope:
 
 ```json
-{"ok":true,"tool":"ghost_status","output":"{...}","parsed":{...}}
+{"ok":true,"tool":"ghost_vacuum","output":"=== Hacker News ===\n...","parsed":null}
 ```
 
-This keeps Ghost state in one process without the legacy server stack.
+## Error Handling
+
+All errors follow the structured format: `Error [CODE]: message`
+
+Codes: `ELEMENT_NOT_FOUND`, `NAVIGATION_TIMEOUT`, `NO_BROWSER`, `NO_VACUUM`,
+`INVALID_INPUT`, `BROWSER_DISCONNECTED`, `TAB_NOT_FOUND`, `CLICK_FAILED`,
+`FILL_REQUIRED`, `INSTANCE_NOT_FOUND`, `BLOCKED_URL`, `EVAL_EXCEPTION`
+
+## Transport Support
+
+| Transport | Attachment | Tab Management | Notes |
+|-----------|-----------|----------------|-------|
+| Playwright (own browser) | `headless: true/false` | Full | Default for new instances |
+| Live Chrome (CDP) | auto-detect or `cdp_url: "live-chrome"` | Full | Attaches to user's Chrome |
+| Chrome Transport (MCP) | via `chrome_transport.py` | Via instances | Bridge to Chrome MCP |
+| Playwright Session | `playwright_session` param | Via instances | Managed auth sessions |
+| Liquid CDP | auto-detect on `localhost:9222` | N/A | Workspace browser |

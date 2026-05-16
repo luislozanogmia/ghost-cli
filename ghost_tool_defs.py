@@ -128,6 +128,16 @@ def get_ghost_tools() -> list[ToolDef]:
                         "type": "integer",
                         "description": "Max elements to show per page (default 50). Use ghost_more for next pages.",
                     },
+                    "wait": {
+                        "type": "string",
+                        "enum": ["load", "networkidle", "none"],
+                        "description": (
+                            "Wait strategy after navigation: "
+                            "'load' (default -- wait for DOMContentLoaded + 2s settle), "
+                            "'networkidle' (wait until network is idle for 500ms -- best for SPAs), "
+                            "'none' (don't wait -- use when page is already loaded)."
+                        ),
+                    },
                 },
             },
         ),
@@ -168,6 +178,16 @@ def get_ghost_tools() -> list[ToolDef]:
                     "value": {
                         "type": "string",
                         "description": "Text value for input/search fields. Required for textbox/searchbox elements.",
+                    },
+                    "wait": {
+                        "type": "string",
+                        "enum": ["load", "networkidle", "none"],
+                        "description": (
+                            "Wait strategy after clicking: "
+                            "'load' (default -- wait for page settle + 1s), "
+                            "'networkidle' (wait until network is idle -- best for SPAs and link clicks), "
+                            "'none' (click and immediately re-vacuum)."
+                        ),
                     },
                 },
                 "required": ["choice"],
@@ -225,7 +245,8 @@ def get_ghost_tools() -> list[ToolDef]:
             description=(
                 "Take a screenshot of the current browser page. "
                 "Optionally scroll to a specific menu element first. "
-                "Returns the file path - use Read tool to view the image."
+                "Returns file path by default. Set inline=true to get base64 data "
+                "that can be viewed directly without a separate Read call."
             ),
             input_schema={
                 "type": "object",
@@ -239,17 +260,26 @@ def get_ghost_tools() -> list[ToolDef]:
                         "type": "boolean",
                         "description": "Capture entire page (default: false, captures only visible viewport).",
                     },
+                    "inline": {
+                        "type": "boolean",
+                        "description": (
+                            "Return screenshot as base64 data URI instead of saving to disk. "
+                            "Useful when you want to view the image immediately without a Read call. "
+                            "Default: false (saves to disk and returns path)."
+                        ),
+                    },
                 },
             },
         ),
         ToolDef(
             name="ghost_extract",
             description=(
-                "Extract structured data from the current page using a named recipe or custom JS. "
-                "Unlike ghost_eval, this tool ALWAYS returns parsed JSON and strips noise. "
-                "Use for data extraction tasks (profiles, search results, lists, tables). "
+                "Smart vacuum: extract page content using a named recipe and return a clean "
+                "numbered list (same format as ghost_vacuum). Recipes know specific page "
+                "structures (LinkedIn, generic links, meta tags) and strip all noise. "
                 "Built-in recipes: 'linkedin_search', 'linkedin_profile', 'page_links', 'page_meta'. "
-                "Or pass a custom JS function that returns a JSON-serializable value."
+                "Or pass a custom JS arrow function via 'script'. "
+                "Use ghost_eval if you need raw JS output instead of formatted text."
             ),
             input_schema={
                 "type": "object",
@@ -259,19 +289,18 @@ def get_ghost_tools() -> list[ToolDef]:
                         "type": "string",
                         "description": (
                             "Named extraction recipe. Built-in: "
-                            "'linkedin_search' (profiles from search results), "
-                            "'linkedin_profile' (single profile data), "
-                            "'page_links' (all links with text and href), "
-                            "'page_meta' (title, description, og tags). "
+                            "'linkedin_search' (numbered profile list from search results), "
+                            "'linkedin_profile' (formatted profile card), "
+                            "'page_links' (numbered link list), "
+                            "'page_meta' (title, description, og tags as text). "
                             "Omit to use custom JS via 'script' parameter."
                         ),
                     },
                     "script": {
                         "type": "string",
                         "description": (
-                            "Custom JS function returning JSON-serializable data. "
-                            "Result is automatically JSON.stringify'd. "
-                            "Example: '() => [...document.querySelectorAll(\"h2\")].map(e => e.textContent)'"
+                            "Custom JS arrow function. Result is returned as-is (string). "
+                            "Example: '() => [...document.querySelectorAll(\"h2\")].map(e => e.textContent).join(\"\\n\")'"
                         ),
                     },
                     "max_items": {
@@ -279,6 +308,147 @@ def get_ghost_tools() -> list[ToolDef]:
                         "description": "Limit number of extracted items (default: 10).",
                     },
                 },
+            },
+        ),
+        # ---------------------------------------------------------------
+        # Improvement #1: ghost_read -- text extraction primitive
+        # ---------------------------------------------------------------
+        ToolDef(
+            name="ghost_read",
+            description=(
+                "Extract the readable text content of the current page (like reader mode). "
+                "Returns clean article text, stripping navigation, ads, and chrome. "
+                "Use this to READ page content. Use ghost_vacuum to INTERACT with elements. "
+                "Optionally navigate to a URL first. Optionally limit output to first N characters."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "url": {
+                        "type": "string",
+                        "description": "Optional URL to navigate to before reading. Omit to read the current page.",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum characters to return (default: 8000). Set higher for long articles.",
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": (
+                            "Optional CSS selector to scope reading. "
+                            "e.g. 'article', 'main', '.post-content'. "
+                            "Omit for auto-detection (tries article > main > body)."
+                        ),
+                    },
+                },
+            },
+        ),
+        # ---------------------------------------------------------------
+        # Improvement #4: ghost_scroll -- scroll and re-vacuum for lazy content
+        # ---------------------------------------------------------------
+        ToolDef(
+            name="ghost_scroll",
+            description=(
+                "Scroll the page down (or up) to load lazy content, then re-vacuum. "
+                "Use this on infinite-scroll pages (LinkedIn feed, Twitter, search results) "
+                "where ghost_more only paginates cached elements but doesn't load NEW content. "
+                "After scrolling, returns fresh vacuum menu with newly loaded elements."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "direction": {
+                        "type": "string",
+                        "enum": ["down", "up", "bottom", "top"],
+                        "description": (
+                            "Scroll direction: 'down' (one viewport), 'up' (one viewport), "
+                            "'bottom' (end of page), 'top' (start of page). Default: 'down'."
+                        ),
+                    },
+                    "pixels": {
+                        "type": "integer",
+                        "description": "Exact pixels to scroll (overrides direction presets). Positive = down, negative = up.",
+                    },
+                    "wait": {
+                        "type": "number",
+                        "description": "Seconds to wait after scrolling for lazy content to load (default: 2.0).",
+                    },
+                },
+            },
+        ),
+        # ---------------------------------------------------------------
+        # Improvement #6: ghost_tab_list -- multi-tab support
+        # ---------------------------------------------------------------
+        ToolDef(
+            name="ghost_tab_list",
+            description=(
+                "List all open tabs in a Ghost browser instance. "
+                "Returns tab index, URL, and title for each tab. "
+                "Use ghost_tab_switch to change the active tab."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                },
+            },
+        ),
+        ToolDef(
+            name="ghost_tab_open",
+            description=(
+                "Open a new tab in the current Ghost browser instance. "
+                "Optionally navigate to a URL. The new tab becomes the active tab. "
+                "Useful for comparing pages side-by-side without creating separate instances."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "url": {
+                        "type": "string",
+                        "description": "URL to open in the new tab. Omit for a blank tab.",
+                    },
+                },
+            },
+        ),
+        ToolDef(
+            name="ghost_tab_switch",
+            description=(
+                "Switch the active tab in a Ghost browser instance by index. "
+                "Use ghost_tab_list first to see available tabs and their indices. "
+                "After switching, automatically vacuums the new active tab."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Zero-based tab index to switch to (from ghost_tab_list).",
+                    },
+                },
+                "required": ["tab_index"],
+            },
+        ),
+        ToolDef(
+            name="ghost_tab_close",
+            description=(
+                "Close a tab in the current Ghost browser instance by index. "
+                "If the closed tab was active, switches to the previous tab. "
+                "Cannot close the last remaining tab."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Zero-based tab index to close (from ghost_tab_list).",
+                    },
+                },
+                "required": ["tab_index"],
             },
         ),
     ]

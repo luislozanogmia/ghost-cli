@@ -41,6 +41,120 @@ from helpers.vacuum import VacuumResult, _build_result, paginate_result, vacuum_
 
 LOGGER = setup_logging("ghost.runtime_host", SERVER_LOG_FILE)
 
+# ---------------------------------------------------------------------------
+# Improvement #5: Structured error codes
+# ---------------------------------------------------------------------------
+
+class GhostError:
+    """Structured error codes for Ghost operations."""
+    ELEMENT_NOT_FOUND = "ELEMENT_NOT_FOUND"
+    NAVIGATION_TIMEOUT = "NAVIGATION_TIMEOUT"
+    EVAL_EXCEPTION = "EVAL_EXCEPTION"
+    NO_BROWSER = "NO_BROWSER"
+    NO_VACUUM = "NO_VACUUM"
+    INVALID_INPUT = "INVALID_INPUT"
+    BROWSER_DISCONNECTED = "BROWSER_DISCONNECTED"
+    TAB_NOT_FOUND = "TAB_NOT_FOUND"
+    BLOCKED_URL = "BLOCKED_URL"
+    CLICK_FAILED = "CLICK_FAILED"
+    FILL_REQUIRED = "FILL_REQUIRED"
+    INSTANCE_NOT_FOUND = "INSTANCE_NOT_FOUND"
+
+    @staticmethod
+    def fmt(code: str, message: str) -> str:
+        """Format a structured error: 'Error [CODE]: message'"""
+        return f"Error [{code}]: {message}"
+
+
+# ---------------------------------------------------------------------------
+# Improvement #1: ghost_read JS extraction script
+# ---------------------------------------------------------------------------
+
+READER_MODE_JS = r"""
+() => {
+    // Try progressively broader selectors to find the main content
+    const CONTENT_SELECTORS = [
+        'article',
+        '[role="main"] article',
+        'main article',
+        '.post-content',
+        '.article-content',
+        '.entry-content',
+        '.content-body',
+        '#article-body',
+        '.story-body',
+        'main',
+        '[role="main"]',
+        '#content',
+        '.content',
+    ];
+
+    let root = null;
+    for (const sel of CONTENT_SELECTORS) {
+        const el = document.querySelector(sel);
+        if (el && el.innerText && el.innerText.trim().length > 200) {
+            root = el;
+            break;
+        }
+    }
+    if (!root) root = document.body;
+
+    // Strip noise elements before extracting text
+    const clone = root.cloneNode(true);
+    const NOISE_SELECTORS = [
+        'nav', 'header', 'footer', '[role="navigation"]',
+        '[role="banner"]', '[role="contentinfo"]',
+        '.sidebar', '.ad', '.advertisement', '.social-share',
+        '.related-posts', '.comments', '#comments',
+        'script', 'style', 'noscript', 'iframe',
+        '[aria-hidden="true"]',
+    ];
+    for (const sel of NOISE_SELECTORS) {
+        clone.querySelectorAll(sel).forEach(el => el.remove());
+    }
+
+    // Extract clean text preserving paragraph structure
+    const text = clone.innerText
+        .replace(/\t/g, ' ')
+        .replace(/ {3,}/g, '  ')
+        .replace(/\n{4,}/g, '\n\n\n')
+        .trim();
+
+    const title = document.title || '(untitled)';
+    const url = location.href;
+    const h1 = (document.querySelector('h1') || {}).innerText || '';
+
+    let header = `=== ${title} ===\nURL: ${url}\n`;
+    if (h1 && h1 !== title) header += `H1: ${h1}\n`;
+    header += '\n';
+
+    return header + text;
+}
+"""
+
+# ---------------------------------------------------------------------------
+# Improvement #2: Wait strategy helpers
+# ---------------------------------------------------------------------------
+
+async def _wait_after_navigation(page, strategy: str = "load", logger=None) -> None:
+    """Apply wait strategy after a navigation or click."""
+    if strategy == "none":
+        return
+    if strategy == "networkidle":
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            if logger:
+                logger.debug("networkidle wait timed out, continuing")
+            await asyncio.sleep(1)
+    else:
+        # Default "load" strategy
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+
 
 def _install_exception_logging() -> None:
     def _log_exception(exc_type, exc_value, exc_traceback):
@@ -442,7 +556,9 @@ class GhostInstance:
         # Standard CLI default: attach directly to the user's current Chrome via
         # the DevTools websocket advertised in DevToolsActivePort, not via the
         # chrome-devtools-mcp auto-connect proxy.
-        if liquid_target is None and (attach_live_chrome or not self.cdp_url):
+        # SKIP auto-attach when headless=True -- the user explicitly wants an
+        # isolated Playwright-owned browser, not their live Chrome.
+        if liquid_target is None and (attach_live_chrome or not self.cdp_url) and not self.headless:
             live_chrome_ws = _resolve_live_chrome_ws_endpoint()
             if live_chrome_ws:
                 if self.cdp_url != live_chrome_ws:
@@ -566,6 +682,9 @@ class GhostInstance:
     async def _get_active_page_locked(self):
         await self._ensure_browser_locked()
         pages = self.context.pages
+        # Prefer the currently pinned page if it's still valid
+        if self.page is not None and self.page in pages:
+            return self.page
         if pages:
             self.page = pages[-1]
         else:
@@ -735,7 +854,7 @@ class GhostInstance:
             "Element: workspace browser viewport"
         )
 
-    async def _vacuum_page_locked(self, url: Optional[str] = None, limit: Optional[int] = None) -> str:
+    async def _vacuum_page_locked(self, url: Optional[str] = None, limit: Optional[int] = None, wait: str = "load") -> str:
         if self._liquid_webview_target() is not None and url and _is_blocked_liquid_self_url(url):
             return (
                 "Error: Refusing to navigate the Liquid-bound Ghost session to a local Liquid/dev URL "
@@ -897,7 +1016,7 @@ class GhostInstance:
 
         if url:
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(2)
+            await _wait_after_navigation(page, wait, logger=LOGGER)
 
         self.page_url = page.url
         self.page_title = await page.title()
@@ -916,9 +1035,9 @@ class GhostInstance:
         self._touch()
         return result.menu_text
 
-    async def vacuum_page(self, url: Optional[str] = None, limit: Optional[int] = None) -> str:
+    async def vacuum_page(self, url: Optional[str] = None, limit: Optional[int] = None, wait: str = "load") -> str:
         async with self.lock:
-            return await self._vacuum_page_locked(url=url, limit=limit)
+            return await self._vacuum_page_locked(url=url, limit=limit, wait=wait)
 
     async def more(self, offset: Optional[int] = None) -> str:
         async with self.lock:
@@ -933,14 +1052,14 @@ class GhostInstance:
             self._touch()
             return menu_text
 
-    async def click_element(self, choice: int, value: Optional[str] = None) -> str:
+    async def click_element(self, choice: int, value: Optional[str] = None, wait: str = "load") -> str:
         async with self.lock:
             if self.vacuum_cache is None:
-                return "Error: No page vacuumed yet. Call ghost_vacuum first."
+                return GhostError.fmt(GhostError.NO_VACUUM, "No page vacuumed yet. Call ghost_vacuum first.")
 
             element = find_element(self.vacuum_cache, choice)
             if element is None:
-                return f"Error: Element [{choice}] not found on page."
+                return GhostError.fmt(GhostError.ELEMENT_NOT_FOUND, f"Element [{choice}] not found. Re-vacuum to refresh the page state.")
             role = element["role"]
             name = element["name"]
 
@@ -995,12 +1114,12 @@ class GhostInstance:
                         except Exception as e:
                             return f"Error: Failed to execute JS click on [{choice}]: {e}"
                 elif not ref and not js_click:
-                    return f"Error: Element [{choice}] is missing a Chrome transport uid or JS click script. Re-vacuum to refresh the page state."
+                    return GhostError.fmt(GhostError.CLICK_FAILED, f"Element [{choice}] is missing a Chrome transport uid or JS click script. Re-vacuum to refresh the page state.")
                 else:
                     # Standard transport click with ref
                     if role in ("textbox", "searchbox", "combobox", "spinbutton"):
                         if not value:
-                            return f"Error: Element [{choice}] is a {role} - provide a value."
+                            return GhostError.fmt(GhostError.FILL_REQUIRED, f"Element [{choice}] is a {role} -- provide a value.")
                         await self._chrome_transport.fill(ref, value)
                         if role in ("searchbox", "textbox", "combobox"):
                             with suppress(Exception):
@@ -1016,18 +1135,22 @@ class GhostInstance:
                         await self._chrome_transport.click(ref)
                         action_desc = f"Clicked '{name}'"
 
-                await asyncio.sleep(1)
+                # Smart wait after click
+                if wait == "none":
+                    pass
+                else:
+                    await asyncio.sleep(1)
                 new_menu = await self._vacuum_page_locked()
                 return f"Done: {action_desc}\n\n{new_menu}"
 
             if self._playwright_session_transport is not None:
                 ref = element.get("ref")
                 if not ref:
-                    return f"Error: Element [{choice}] is missing a Playwright ref. Re-vacuum to refresh the page state."
+                    return GhostError.fmt(GhostError.CLICK_FAILED, f"Element [{choice}] is missing a Playwright ref. Re-vacuum to refresh the page state.")
 
                 if role in ("textbox", "searchbox", "combobox", "spinbutton"):
                     if not value:
-                        return f"Error: Element [{choice}] is a {role} - provide a value."
+                        return GhostError.fmt(GhostError.FILL_REQUIRED, f"Element [{choice}] is a {role} -- provide a value.")
                     await self._playwright_session_transport.fill(ref, value)
                     if role in ("searchbox", "textbox", "combobox"):
                         with suppress(Exception):
@@ -1043,7 +1166,10 @@ class GhostInstance:
                     await self._playwright_session_transport.click(ref)
                     action_desc = f"Clicked '{name}'"
 
-                await asyncio.sleep(1)
+                if wait == "none":
+                    pass
+                else:
+                    await asyncio.sleep(1)
                 new_menu = await self._vacuum_page_locked()
                 return f"Done: {action_desc}\n\n{new_menu}"
 
@@ -1059,7 +1185,7 @@ class GhostInstance:
             try:
                 if role in ("textbox", "searchbox", "combobox", "spinbutton"):
                     if not value:
-                        return f"Error: Element [{choice}] is a {role} - provide a value."
+                        return GhostError.fmt(GhostError.FILL_REQUIRED, f"Element [{choice}] is a {role} -- provide a value.")
                     locator = page.get_by_role(role, name=name).nth(occurrence)
                     await locator.fill(value, timeout=5000)
                     if role in ("searchbox", "textbox", "combobox"):
@@ -1073,7 +1199,9 @@ class GhostInstance:
                     locator = page.get_by_role("link", name=name).nth(occurrence)
                     url_before = page.url
                     await locator.click(timeout=5000)
-                    await asyncio.sleep(1)
+                    # Smart wait: use networkidle for link clicks by default
+                    link_wait = "networkidle" if wait == "load" else wait
+                    await _wait_after_navigation(page, link_wait, logger=LOGGER)
                     if page.url != url_before:
                         action_desc = f"Navigated to link '{name}'"
                     else:
@@ -1088,9 +1216,9 @@ class GhostInstance:
                     match_count = sum(
                         1 for elem in self.vacuum_cache.elements if elem["role"] == role and elem["name"] == name
                     )
-                    return (
-                        f"Error: Multiple elements match '{name}' ({match_count} matches). "
-                        "Try a more specific element number."
+                    return GhostError.fmt(
+                        GhostError.CLICK_FAILED,
+                        f"Multiple elements match '{name}' ({match_count} matches). Try a more specific element number.",
                     )
                 try:
                     await page.get_by_text(name, exact=True).nth(occurrence).click(timeout=5000)
@@ -1098,17 +1226,26 @@ class GhostInstance:
                 except Exception as fallback_err:
                     fallback_str = str(fallback_err)
                     if "timeout" in fallback_str.lower():
-                        return (
-                            f"Error: Element [{choice}] '{name}' timed out. "
-                            "Page may have changed - re-vacuum to get fresh menu."
+                        return GhostError.fmt(
+                            GhostError.NAVIGATION_TIMEOUT,
+                            f"Element [{choice}] '{name}' timed out. Page may have changed -- re-vacuum to get fresh menu.",
                         )
-                    return f"Error: Could not click [{choice}] '{name}'. Re-vacuum to get fresh menu."
+                    return GhostError.fmt(
+                        GhostError.CLICK_FAILED,
+                        f"Could not click [{choice}] '{name}'. Re-vacuum to get fresh menu.",
+                    )
 
-            await asyncio.sleep(1)
+            # Smart wait after non-link clicks
+            if wait == "none":
+                pass
+            elif wait == "networkidle":
+                await _wait_after_navigation(page, "networkidle", logger=LOGGER)
+            else:
+                await asyncio.sleep(1)
             new_menu = await self._vacuum_page_locked()
             return f"Done: {action_desc}\n\n{new_menu}"
 
-    async def screenshot(self, element_num: Optional[int], full_page: bool) -> str:
+    async def screenshot(self, element_num: Optional[int], full_page: bool, inline: bool = False) -> str:
         async with self.lock:
             if self._liquid_webview_target() is not None:
                 return await self._screenshot_liquid_webview_locked(full_page=full_page)
@@ -1200,14 +1337,273 @@ class GhostInstance:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot_path = screenshots_dir / f"ghost_{safe_instance_id}_{timestamp}.png"
 
-            await page.screenshot(path=str(screenshot_path), full_page=full_page)
+            screenshot_bytes = await page.screenshot(full_page=full_page)
+            screenshot_path.write_bytes(screenshot_bytes)
             self._touch()
+
+            if inline:
+                b64_data = base64.b64encode(screenshot_bytes).decode("ascii")
+                return (
+                    f"Screenshot (inline base64 PNG, {len(screenshot_bytes)} bytes):\n"
+                    f"Instance: {self.instance_id}\n"
+                    f"Page: {self.page_url or page.url}\n"
+                    f"Element: {element_description}\n"
+                    f"data:image/png;base64,{b64_data}"
+                )
+
             return (
                 f"Screenshot saved: {screenshot_path.resolve()}\n"
                 f"Instance: {self.instance_id}\n"
                 f"Page: {self.page_url or page.url}\n"
                 f"Element: {element_description}"
             )
+
+    # -------------------------------------------------------------------
+    # Improvement #1: ghost_read -- text extraction
+    # -------------------------------------------------------------------
+    async def read_page(self, url: Optional[str] = None, max_chars: int = 8000, selector: Optional[str] = None) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            # Navigate if URL given
+            if url:
+                if self._playwright_session_transport is not None:
+                    await self._playwright_session_transport.goto(url)
+                    await asyncio.sleep(1)
+                elif self._chrome_transport is not None:
+                    page = await self._chrome_transport.ensure_page(url=url)
+                    self.page_url = str(page.get("url", ""))
+                else:
+                    page = await self._get_active_page_locked()
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    await _wait_after_navigation(page, "load", logger=LOGGER)
+
+            # Build the JS extraction script
+            if selector:
+                # User-provided CSS selector
+                js_script = f"""() => {{
+                    const el = document.querySelector({json.dumps(selector)});
+                    if (!el) return 'Error [ELEMENT_NOT_FOUND]: Selector {selector} matched nothing on this page.';
+                    const title = document.title || '(untitled)';
+                    const url = location.href;
+                    const h1 = (document.querySelector('h1') || {{}}).innerText || '';
+                    let header = '=== ' + title + ' ===\\nURL: ' + url + '\\n';
+                    if (h1 && h1 !== title) header += 'H1: ' + h1 + '\\n';
+                    header += '\\n';
+                    const text = el.innerText.replace(/\\t/g, ' ').replace(/ {{3,}}/g, '  ').replace(/\\n{{4,}}/g, '\\n\\n\\n').trim();
+                    return header + text;
+                }}"""
+            else:
+                js_script = READER_MODE_JS
+
+            # Execute on the appropriate transport
+            if self._chrome_transport is not None:
+                raw = await self._chrome_transport.call_tool(
+                    "evaluate_script",
+                    {"function": js_script},
+                    timeout_seconds=15.0,
+                )
+                # Chrome transport may wrap output in markdown code fences
+                import re as _re_read
+                _m = _re_read.search(r'```(?:\w+)?\s*([\s\S]*?)```', raw or "")
+                result = _m.group(1).strip() if _m else (raw or "").strip()
+            elif self._playwright_session_transport is not None:
+                result = await self._playwright_session_transport.evaluate_script(js_script)
+            elif self.context is not None:
+                page = await self._get_active_page_locked()
+                result = await page.evaluate(js_script)
+                self.page_url = page.url
+                self.page_title = await page.title()
+            else:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Call ghost_vacuum or ghost_instance_create first.")
+
+            if not isinstance(result, str):
+                result = str(result) if result else "(empty page)"
+
+            # Truncate if needed
+            if len(result) > max_chars:
+                result = result[:max_chars] + f"\n\n--- truncated at {max_chars} chars (total: {len(result)}) ---"
+
+            self._touch()
+            return result
+
+    # -------------------------------------------------------------------
+    # Improvement #4: ghost_scroll -- scroll and re-vacuum
+    # -------------------------------------------------------------------
+    async def scroll_page(self, direction: str = "down", pixels: Optional[int] = None, wait_secs: float = 2.0) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            # Build scroll JS
+            if pixels is not None:
+                scroll_js = f"() => {{ window.scrollBy(0, {int(pixels)}); return window.scrollY; }}"
+            elif direction == "bottom":
+                scroll_js = "() => { window.scrollTo(0, document.body.scrollHeight); return window.scrollY; }"
+            elif direction == "top":
+                scroll_js = "() => { window.scrollTo(0, 0); return window.scrollY; }"
+            elif direction == "up":
+                scroll_js = "() => { window.scrollBy(0, -window.innerHeight); return window.scrollY; }"
+            else:
+                # default: down one viewport
+                scroll_js = "() => { window.scrollBy(0, window.innerHeight); return window.scrollY; }"
+
+            if self._chrome_transport is not None:
+                await self._chrome_transport.call_tool(
+                    "evaluate_script",
+                    {"function": scroll_js},
+                    timeout_seconds=10.0,
+                )
+            elif self._playwright_session_transport is not None:
+                await self._playwright_session_transport.evaluate_script(scroll_js)
+            elif self.context is not None:
+                page = await self._get_active_page_locked()
+                await page.evaluate(scroll_js)
+            else:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            # Wait for lazy content to load
+            await asyncio.sleep(wait_secs)
+
+            # Re-vacuum to pick up new content
+            menu = await self._vacuum_page_locked(wait="none")
+            self._touch()
+            return f"Scrolled {direction}{' ' + str(pixels) + 'px' if pixels else ''}. Re-vacuumed:\n\n{menu}"
+
+    # -------------------------------------------------------------------
+    # Improvement #6: Multi-tab support
+    # -------------------------------------------------------------------
+    async def tab_list(self) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            if self._chrome_transport is not None:
+                return "Tab management not supported on Chrome transport instances. Use separate Ghost instances instead."
+            if self._playwright_session_transport is not None:
+                return "Tab management not supported on Playwright session instances. Use separate Ghost instances instead."
+
+            if self.context is None:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            pages = self.context.pages
+            current_page = self.page
+            lines = [f"=== Tabs ({len(pages)}) ==="]
+            for i, p in enumerate(pages):
+                marker = " *" if p == current_page else ""
+                try:
+                    title = await p.title()
+                except Exception:
+                    title = "(unknown)"
+                lines.append(f"  [{i}] {title}{marker}")
+                lines.append(f"       {p.url}")
+            lines.append("")
+            lines.append("* = active tab. Use ghost_tab_switch to change.")
+            self._touch()
+            return "\n".join(lines)
+
+    async def tab_open(self, url: Optional[str] = None) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+                return "Tab management not supported on this transport. Use separate Ghost instances instead."
+
+            if self.context is None:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            new_page = await self.context.new_page()
+            if url:
+                await new_page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await _wait_after_navigation(new_page, "load", logger=LOGGER)
+
+            self.page = new_page
+            self.page_url = new_page.url
+            try:
+                self.page_title = await new_page.title()
+            except Exception:
+                self.page_title = self.page_url
+
+            # Invalidate vacuum cache for new tab
+            self.vacuum_cache = None
+            self.current_offset = 0
+            self._touch()
+
+            tab_count = len(self.context.pages)
+            tab_index = tab_count - 1
+            return f"Opened new tab [{tab_index}]: {self.page_url}\nTotal tabs: {tab_count}"
+
+    async def tab_switch(self, tab_index: int) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+                return "Tab management not supported on this transport. Use separate Ghost instances instead."
+
+            if self.context is None:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            pages = self.context.pages
+            if tab_index < 0 or tab_index >= len(pages):
+                return GhostError.fmt(GhostError.TAB_NOT_FOUND, f"Tab index {tab_index} out of range (0-{len(pages)-1}).")
+
+            self.page = pages[tab_index]
+            self.page_url = self.page.url
+            try:
+                self.page_title = await self.page.title()
+            except Exception:
+                self.page_title = self.page_url
+
+            # Bring tab to front
+            await self.page.bring_to_front()
+
+            # Invalidate vacuum cache for the new tab
+            self.vacuum_cache = None
+            self.current_offset = 0
+            self._touch()
+
+            # Auto-vacuum the new tab
+            menu = await self._vacuum_page_locked(wait="none")
+            return f"Switched to tab [{tab_index}]: {self.page_title}\n\n{menu}"
+
+    async def tab_close(self, tab_index: int) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+                return "Tab management not supported on this transport. Use separate Ghost instances instead."
+
+            if self.context is None:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            pages = self.context.pages
+            if tab_index < 0 or tab_index >= len(pages):
+                return GhostError.fmt(GhostError.TAB_NOT_FOUND, f"Tab index {tab_index} out of range (0-{len(pages)-1}).")
+
+            if len(pages) <= 1:
+                return GhostError.fmt(GhostError.INVALID_INPUT, "Cannot close the last remaining tab. Use ghost_instance_close to close the entire instance.")
+
+            closing_page = pages[tab_index]
+            closing_url = closing_page.url
+
+            await closing_page.close()
+
+            # Switch to previous tab if we closed the active one
+            remaining_pages = self.context.pages
+            if closing_page == self.page and remaining_pages:
+                new_index = min(tab_index, len(remaining_pages) - 1)
+                self.page = remaining_pages[new_index]
+                self.page_url = self.page.url
+                try:
+                    self.page_title = await self.page.title()
+                except Exception:
+                    self.page_title = self.page_url
+                await self.page.bring_to_front()
+
+            # Invalidate vacuum cache
+            self.vacuum_cache = None
+            self.current_offset = 0
+            self._touch()
+
+            return f"Closed tab [{tab_index}]: {closing_url}\nRemaining tabs: {len(remaining_pages)}"
 
     async def save_auth(self) -> str:
         async with self.lock:
@@ -1494,9 +1890,10 @@ async def call_tool(name: str, arguments: dict | None) -> str:
         if name == "ghost_vacuum":
             url = arguments.get("url")
             if url is not None and not isinstance(url, str):
-                return "Error: 'url' must be a string."
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'url' must be a string.")
             limit = arguments.get("limit")
-            result = await instance.vacuum_page(url=url, limit=limit)
+            wait = str(arguments.get("wait", "load"))
+            result = await instance.vacuum_page(url=url, limit=limit, wait=wait)
             return result
 
         if name == "ghost_more":
@@ -1507,9 +1904,10 @@ async def call_tool(name: str, arguments: dict | None) -> str:
         if name == "ghost_click":
             choice = arguments.get("choice")
             value = arguments.get("value")
+            wait = str(arguments.get("wait", "load"))
             if choice is None:
-                return "Error: 'choice' is required."
-            result = await instance.click_element(int(choice), value=value)
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'choice' is required.")
+            result = await instance.click_element(int(choice), value=value, wait=wait)
             return result
 
         if name == "ghost_status":
@@ -1521,16 +1919,62 @@ async def call_tool(name: str, arguments: dict | None) -> str:
         if name == "ghost_screenshot":
             element_num = arguments.get("element")
             full_page = bool(arguments.get("full_page", False))
+            inline = bool(arguments.get("inline", False))
             result = await instance.screenshot(
                 element_num=int(element_num) if element_num is not None else None,
                 full_page=full_page,
+                inline=inline,
             )
             return result
+
+        # Improvement #1: ghost_read
+        if name == "ghost_read":
+            url = arguments.get("url")
+            if url is not None and not isinstance(url, str):
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'url' must be a string.")
+            max_chars = int(arguments.get("max_chars", 8000))
+            selector = arguments.get("selector")
+            result = await instance.read_page(url=url, max_chars=max_chars, selector=selector)
+            return result
+
+        # Improvement #4: ghost_scroll
+        if name == "ghost_scroll":
+            direction = str(arguments.get("direction", "down"))
+            pixels = arguments.get("pixels")
+            wait_secs = float(arguments.get("wait", 2.0))
+            result = await instance.scroll_page(
+                direction=direction,
+                pixels=int(pixels) if pixels is not None else None,
+                wait_secs=wait_secs,
+            )
+            return result
+
+        # Improvement #6: Multi-tab tools
+        if name == "ghost_tab_list":
+            return await instance.tab_list()
+
+        if name == "ghost_tab_open":
+            url = arguments.get("url")
+            if url is not None and not isinstance(url, str):
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'url' must be a string.")
+            return await instance.tab_open(url=url)
+
+        if name == "ghost_tab_switch":
+            tab_index = arguments.get("tab_index")
+            if tab_index is None:
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'tab_index' is required.")
+            return await instance.tab_switch(int(tab_index))
+
+        if name == "ghost_tab_close":
+            tab_index = arguments.get("tab_index")
+            if tab_index is None:
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'tab_index' is required.")
+            return await instance.tab_close(int(tab_index))
 
         if name == "ghost_eval":
             script = arguments.get("script", "").strip()
             if not script:
-                return "Error: 'script' is required."
+                return GhostError.fmt(GhostError.INVALID_INPUT, "'script' is required.")
             await instance.ensure_browser()
             if instance._chrome_transport is not None:
                 result = await instance._chrome_transport.call_tool(
@@ -1542,9 +1986,12 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             if instance._playwright_session_transport is not None:
                 return await instance._playwright_session_transport.evaluate_script(script)
             if instance.context is None:
-                return "Error: No browser connected. Call ghost_vacuum first."
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Call ghost_vacuum first.")
             page = await instance._get_active_page_locked()
-            result = await page.evaluate(script)
+            try:
+                result = await page.evaluate(script)
+            except Exception as eval_exc:
+                return GhostError.fmt(GhostError.EVAL_EXCEPTION, f"JS evaluation failed: {_sanitize_error(str(eval_exc))}")
             if isinstance(result, str):
                 return result
             return json.dumps(result, ensure_ascii=False, indent=2)
@@ -1560,39 +2007,43 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             elif custom_script:
                 js_code = custom_script
             else:
-                return "Error: ghost_extract requires either 'recipe' or 'script' parameter."
+                return GhostError.fmt(GhostError.INVALID_INPUT, "ghost_extract requires either 'recipe' or 'script' parameter.")
 
-            # Wrap in JSON.stringify to ensure clean JSON output
-            wrapped_script = f"() => JSON.stringify(({js_code}))"
+            # Recipes are IIFEs that return formatted strings (same style
+            # as vacuum output -- numbered lists, not JSON).  Custom scripts
+            # are arrow functions that need to be called.
+            if custom_script:
+                eval_script = f"() => ({js_code})()"
+            else:
+                eval_script = f"() => ({js_code})"
 
             await instance.ensure_browser()
             if instance._chrome_transport is not None:
-                raw_result = await instance._chrome_transport.call_tool(
+                result = await instance._chrome_transport.call_tool(
                     "evaluate_script",
-                    {"function": wrapped_script},
+                    {"function": eval_script},
                     timeout_seconds=30.0,
                 )
                 # Chrome transport may wrap output in markdown code fences
                 import re as _re_extract
-                _m = _re_extract.search(r'```(?:json)?\s*([\s\S]*?)```', raw_result or "")
-                raw_json = _m.group(1).strip() if _m else (raw_result or "").strip()
+                _m = _re_extract.search(r'```(?:json)?\s*([\s\S]*?)```', result or "")
+                result = _m.group(1).strip() if _m else (result or "").strip()
             elif instance._playwright_session_transport is not None:
-                raw_json = await instance._playwright_session_transport.evaluate_script(wrapped_script)
+                result = await instance._playwright_session_transport.evaluate_script(eval_script)
             elif instance.context is not None:
                 page = await instance._get_active_page_locked()
-                raw_json = await page.evaluate(wrapped_script)
+                try:
+                    result = await page.evaluate(eval_script)
+                except Exception as eval_exc:
+                    return GhostError.fmt(GhostError.EVAL_EXCEPTION, f"Recipe '{recipe_name or 'custom'}' failed: {_sanitize_error(str(eval_exc))}")
             else:
-                return "Error: No browser connected. Call ghost_vacuum first."
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected. Call ghost_vacuum first.")
 
-            # Parse and re-serialize for clean, indented JSON output
-            try:
-                parsed = json.loads(raw_json)
-                # Handle double-encoded JSON strings
-                if isinstance(parsed, str):
-                    parsed = json.loads(parsed)
-                return json.dumps(parsed, indent=2, ensure_ascii=False)
-            except (json.JSONDecodeError, TypeError):
-                return str(raw_json)
+            # Return the result as-is -- recipes produce formatted text,
+            # custom scripts return whatever the JS produces.
+            if result is None:
+                return "(no result)"
+            return str(result)
 
         if name == "ghost_save_auth":
             result = await instance.save_auth()
@@ -1602,4 +2053,12 @@ async def call_tool(name: str, arguments: dict | None) -> str:
 
     except Exception as exc:
         LOGGER.exception("Ghost tool call failed: %s", name)
-        return f"Ghost error: {_sanitize_error(str(exc))}"
+        # Classify the exception into a structured error code
+        exc_str = str(exc).lower()
+        if "timeout" in exc_str or "timed out" in exc_str:
+            code = GhostError.NAVIGATION_TIMEOUT
+        elif "disconnected" in exc_str or "closed" in exc_str or "target closed" in exc_str:
+            code = GhostError.BROWSER_DISCONNECTED
+        else:
+            code = "INTERNAL"
+        return GhostError.fmt(code, _sanitize_error(str(exc)))

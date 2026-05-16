@@ -310,32 +310,30 @@ def cmd_batch(args) -> None:
             # Wait for page load
             await asyncio.sleep(delay)
 
-            # Extract
+            # Extract -- recipes are IIFEs that return formatted text,
+            # custom scripts are arrow functions that need to be called.
             if recipe:
                 js_code = get_recipe(recipe, max_items)
+                eval_script = f"() => ({js_code})"
             elif script:
                 js_code = script
+                eval_script = f"() => ({js_code})()"
             else:
-                js_code = "document.title"
+                eval_script = "() => document.title"
 
             response = await _daemon_request({
                 "type": "call_tool",
                 "tool": "ghost_eval",
                 "arguments": {
                     "instance_id": instance_id,
-                    "script": f"() => JSON.stringify(({js_code}))",
+                    "script": eval_script,
                 },
             })
 
             raw = str(response.get("text", ""))
-            try:
-                parsed = json.loads(raw)
-                results[label] = {"url": url, "data": parsed}
-                item_count = len(parsed) if isinstance(parsed, list) else 1
-                print(f"  -> {item_count} items extracted", file=sys.stderr)
-            except (json.JSONDecodeError, TypeError):
-                results[label] = {"url": url, "raw": raw}
-                print(f"  -> raw output (not JSON)", file=sys.stderr)
+            results[label] = {"url": url, "output": raw}
+            line_count = len(raw.strip().split('\n'))
+            print(f"  -> {line_count} lines extracted", file=sys.stderr)
 
             # Rate limit
             if i < total - 1:
