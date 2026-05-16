@@ -150,9 +150,20 @@ class VacuumResult:
 # ---------------------------------------------------------------------------
 
 def _truncate(name: str, max_len: int = MAX_NAME_LEN) -> str:
-    """Truncate a name and add ellipsis if too long."""
+    """
+    Truncate a name and add ellipsis if too long.
+
+    Also handles compound accessible names (e.g., "Hacker Newsnew | past | comments...")
+    by preferring the first segment before common separators.
+    """
     if len(name) <= max_len:
         return name
+    # For compound names with pipe/bullet separators, use first segment
+    for sep in (" | ", " · ", " / ", " - ", " — ", " – "):
+        if sep in name:
+            first_part = name.split(sep, 1)[0].strip()
+            if len(first_part) >= 5:  # don't use trivially short fragments
+                return first_part if len(first_part) <= max_len else first_part[: max_len - 3] + "..."
     return name[: max_len - 3] + "..."
 
 
@@ -169,18 +180,21 @@ def _detect_landmark(node: dict) -> Optional[str]:
     return LANDMARK_MAP.get(role)
 
 
-def _collect_child_text(node: dict, max_depth: int = 3) -> str:
+def _collect_child_text(node: dict, max_depth: int = 3, max_parts: int = 3) -> str:
     """
     Recursively collect text from child nodes of an interactive element.
 
     When CDP returns a link with an empty 'name' but the link wraps text nodes
     (e.g., person names on LinkedIn), this gathers that text. Limited depth
-    prevents runaway recursion on deep trees.
+    prevents runaway recursion on deep trees. Limited parts prevents compound
+    names like "Hacker Newsnew | past | comments | ask | show | jobs".
     """
     if max_depth <= 0:
         return ""
     parts = []
     for child in node.get("children", []):
+        if len(parts) >= max_parts:
+            break
         child_role = (child.get("role") or "").lower()
         child_name = _clean_name(child.get("name"))
         # Only collect text from non-interactive children (statictext, img alt, etc.)
@@ -188,7 +202,7 @@ def _collect_child_text(node: dict, max_depth: int = 3) -> str:
         if child_role not in INTERACTIVE_ROLES and child_name:
             parts.append(child_name)
         elif child_role not in INTERACTIVE_ROLES:
-            deeper = _collect_child_text(child, max_depth - 1)
+            deeper = _collect_child_text(child, max_depth - 1, max_parts - len(parts))
             if deeper:
                 parts.append(deeper)
     return " ".join(parts)

@@ -491,6 +491,8 @@ class GhostInstance:
     page_url: str = ""
     page_title: str = ""
     current_offset: int = 0
+    _last_dialog: Optional[dict] = None
+    _active_frame: Any = None  # None = main frame, set by ghost_iframes
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, compare=False)
 
     @property
@@ -649,6 +651,34 @@ class GhostInstance:
             self._reset_runtime_state()
 
         self.context.on("close", _on_close)
+
+        # Fix #4: Auto-handle dialogs (alert, confirm, prompt, beforeunload)
+        # Accept all dialogs by default so Ghost doesn't get stuck.
+        # Store last dialog info for inspection.
+        self._last_dialog: Optional[dict] = None
+
+        def _on_dialog(dialog) -> None:
+            self._last_dialog = {
+                "type": dialog.type,
+                "message": dialog.message,
+                "default_value": dialog.default_value,
+            }
+            LOGGER.info("Ghost auto-dismissed %s dialog: %s", dialog.type, dialog.message[:100])
+
+        async def _handle_dialog(dialog) -> None:
+            _on_dialog(dialog)
+            try:
+                await dialog.accept()
+            except Exception:
+                pass
+
+        # Register on all existing pages and future pages
+        for existing_page in (self.context.pages if self.context else []):
+            existing_page.on("dialog", _handle_dialog)
+
+        if self.context:
+            self.context.on("page", lambda page: page.on("dialog", _handle_dialog))
+
         LOGGER.info("Ghost browser ready instance=%s context=%s", self.instance_id,
                      self.cdp_url or self.context_dir.resolve())
 
@@ -1015,13 +1045,47 @@ class GhostInstance:
         page = await self._get_active_page_locked()
 
         if url:
+            # Navigating resets to main frame
+            self._active_frame = None
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await _wait_after_navigation(page, wait, logger=LOGGER)
 
         self.page_url = page.url
         self.page_title = await page.title()
 
-        snapshot = await _get_ax_tree_cdp(page)
+        # Fix #3: Use active iframe if set, otherwise main page
+        snapshot = None
+        if self._active_frame is not None:
+            try:
+                cdp = await page.context.new_cdp_session(page)
+                try:
+                    # Get the frame tree to find the iframe's backend node
+                    frame_tree_result = await cdp.send("Page.getFrameTree")
+                    target_url = self._active_frame.url
+
+                    async def _find_frame_id(tree_node, target_url):
+                        frame = tree_node.get("frame", {})
+                        if frame.get("url") == target_url:
+                            return frame.get("id")
+                        for child in tree_node.get("childFrames", []):
+                            found = await _find_frame_id(child, target_url)
+                            if found:
+                                return found
+                        return None
+
+                    frame_id = await _find_frame_id(frame_tree_result.get("frameTree", {}), target_url)
+                    if frame_id:
+                        result = await cdp.send("Accessibility.getFullAXTree", {"frameId": frame_id})
+                        snapshot = _build_ax_tree_from_nodes(result.get("nodes", []))
+                    # If we can't find the frame, fall back to page-level snapshot
+                finally:
+                    await cdp.detach()
+            except Exception:
+                LOGGER.debug("Iframe AX tree extraction failed, using page-level snapshot")
+                snapshot = await _get_ax_tree_cdp(page)
+        else:
+            snapshot = await _get_ax_tree_cdp(page)
+
         if not snapshot:
             return "Error: Could not get accessibility snapshot."
 
@@ -1605,6 +1669,116 @@ class GhostInstance:
 
             return f"Closed tab [{tab_index}]: {closing_url}\nRemaining tabs: {len(remaining_pages)}"
 
+    # -------------------------------------------------------------------
+    # Fix #2: ghost_key -- independent keyboard input
+    # -------------------------------------------------------------------
+    async def press_key(self, key: Optional[str] = None, text: Optional[str] = None, repeat: int = 1) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            if not key and not text:
+                return GhostError.fmt(GhostError.INVALID_INPUT, "Either 'key' or 'text' is required.")
+
+            if self._chrome_transport is not None:
+                if text:
+                    await self._chrome_transport.call_tool(
+                        "evaluate_script",
+                        {"function": f"() => document.activeElement && document.activeElement.value !== undefined && (document.activeElement.value = {json.dumps(text)})"},
+                        timeout_seconds=10.0,
+                    )
+                    return f"Typed '{text}' into focused element"
+                for _ in range(repeat):
+                    await self._chrome_transport.press_key(key)
+                return f"Pressed '{key}'" + (f" x{repeat}" if repeat > 1 else "")
+
+            if self._playwright_session_transport is not None:
+                if text:
+                    await self._playwright_session_transport.evaluate_script(
+                        f"() => document.activeElement && document.activeElement.value !== undefined && (document.activeElement.value = {json.dumps(text)})"
+                    )
+                    return f"Typed '{text}' into focused element"
+                for _ in range(repeat):
+                    await self._playwright_session_transport.press_key(key)
+                return f"Pressed '{key}'" + (f" x{repeat}" if repeat > 1 else "")
+
+            if self.context is None:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            page = await self._get_active_page_locked()
+            target = self._active_frame or page
+
+            if text:
+                await target.keyboard.type(text)
+                self._touch()
+                return f"Typed '{text[:50]}' ({len(text)} chars) into focused element"
+
+            for _ in range(repeat):
+                await target.keyboard.press(key)
+            self._touch()
+            return f"Pressed '{key}'" + (f" x{repeat}" if repeat > 1 else "")
+
+    # -------------------------------------------------------------------
+    # Fix #3: ghost_iframes -- iframe support
+    # -------------------------------------------------------------------
+    async def list_or_switch_iframes(self, index: Optional[int] = None) -> str:
+        async with self.lock:
+            await self._ensure_browser_locked()
+
+            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+                return "Iframe management not supported on Chrome/Playwright transport. Use ghost_eval to interact with iframe content."
+
+            if self.context is None:
+                return GhostError.fmt(GhostError.NO_BROWSER, "No browser connected.")
+
+            page = await self._get_active_page_locked()
+
+            if index is None:
+                # List all iframes
+                frames = page.frames
+                if len(frames) <= 1:
+                    return "No iframes found on this page (only main frame)."
+
+                lines = [f"=== Iframes ({len(frames) - 1}) ==="]
+                for i, frame in enumerate(frames):
+                    if i == 0:
+                        marker = " (main)" if self._active_frame is None else ""
+                        lines.append(f"  [-1] Main frame{marker}")
+                        lines.append(f"        {frame.url}")
+                    else:
+                        marker = " *" if frame == self._active_frame else ""
+                        lines.append(f"  [{i - 1}] {frame.name or '(unnamed)'}{marker}")
+                        lines.append(f"        {frame.url}")
+                lines.append("")
+                lines.append("* = active frame. Use ghost_iframes with index to switch.")
+                self._touch()
+                return "\n".join(lines)
+
+            # Switch to iframe or back to main
+            if index == -1 or index is None:
+                self._active_frame = None
+                self.vacuum_cache = None
+                self.current_offset = 0
+                self._touch()
+                return "Switched back to main frame. Re-vacuum to get fresh menu."
+
+            frames = page.frames
+            # iframe index 0 = frames[1] (frames[0] is main)
+            frame_index = index + 1
+            if frame_index < 1 or frame_index >= len(frames):
+                return GhostError.fmt(
+                    GhostError.INVALID_INPUT,
+                    f"Iframe index {index} out of range (0-{len(frames) - 2}). Use ghost_iframes without index to list.",
+                )
+
+            self._active_frame = frames[frame_index]
+            self.vacuum_cache = None
+            self.current_offset = 0
+            self._touch()
+
+            frame_url = self._active_frame.url
+            frame_name = self._active_frame.name or "(unnamed)"
+            return f"Switched to iframe [{index}]: {frame_name}\nURL: {frame_url}\nRe-vacuum to interact with iframe content."
+
     async def save_auth(self) -> str:
         async with self.lock:
             if self._chrome_transport is not None:
@@ -2048,6 +2222,22 @@ async def call_tool(name: str, arguments: dict | None) -> str:
         if name == "ghost_save_auth":
             result = await instance.save_auth()
             return result
+
+        # Fix #2: ghost_key -- independent keyboard input
+        if name == "ghost_key":
+            key = arguments.get("key")
+            text = arguments.get("text")
+            repeat = int(arguments.get("repeat", 1))
+            if not key and not text:
+                return GhostError.fmt(GhostError.INVALID_INPUT, "Either 'key' or 'text' is required.")
+            return await instance.press_key(key=key, text=text, repeat=repeat)
+
+        # Fix #3: ghost_iframes -- iframe support
+        if name == "ghost_iframes":
+            index = arguments.get("index")
+            if index is not None:
+                index = int(index)
+            return await instance.list_or_switch_iframes(index=index)
 
         return f"Unknown tool: {name}"
 

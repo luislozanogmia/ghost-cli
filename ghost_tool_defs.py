@@ -451,4 +451,71 @@ def get_ghost_tools() -> list[ToolDef]:
                 "required": ["tab_index"],
             },
         ),
+        # ---------------------------------------------------------------
+        # ghost_key -- independent keyboard input
+        # ---------------------------------------------------------------
+        ToolDef(
+            name="ghost_key",
+            description=(
+                "Press keyboard keys independently of any element. "
+                "Use for Enter, Escape, Tab, arrow keys, shortcuts (Ctrl+A), "
+                "or typing text into the currently focused element. "
+                "Supports Playwright key notation: Enter, Escape, Tab, ArrowDown, "
+                "ArrowUp, Backspace, Delete, Home, End, PageDown, PageUp, "
+                "Control+a, Meta+c, Shift+Tab, etc."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "key": {
+                        "type": "string",
+                        "description": (
+                            "Key or key combination to press. Examples: "
+                            "'Enter', 'Escape', 'Tab', 'ArrowDown', "
+                            "'Control+a', 'Meta+v', 'Shift+Tab'. "
+                            "For typing text, use the 'text' parameter instead."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "Text to type into the currently focused element. "
+                            "Unlike 'key', this types each character sequentially "
+                            "with realistic key events. Use for filling inputs "
+                            "that don't appear in the vacuum menu."
+                        ),
+                    },
+                    "repeat": {
+                        "type": "integer",
+                        "description": "Number of times to repeat the key press (default: 1).",
+                    },
+                },
+            },
+        ),
+        # ---------------------------------------------------------------
+        # ghost_iframes -- list and switch to iframes
+        # ---------------------------------------------------------------
+        ToolDef(
+            name="ghost_iframes",
+            description=(
+                "List all iframes on the current page, or switch Ghost's active "
+                "context to a specific iframe by index. After switching, "
+                "ghost_vacuum will extract elements from inside that iframe. "
+                "Use 'index: -1' or omit index to switch back to the main frame."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "instance_id": INSTANCE_ID_PROPERTY,
+                    "index": {
+                        "type": "integer",
+                        "description": (
+                            "Zero-based iframe index to switch to. "
+                            "Omit to list all iframes. Use -1 to switch back to main frame."
+                        ),
+                    },
+                },
+            },
+        ),
     ]
