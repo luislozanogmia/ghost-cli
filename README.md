@@ -158,11 +158,11 @@ Built-in recipes for `ghost_extract`:
 
 ## Advanced Usage
 
-Attach to managed Playwright LinkedIn sessions:
+Open LinkedIn with the stable launcher and shared auth state:
 
 ```bash
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}'
-./ghost-cli call ghost_vacuum --arguments '{"instance_id":"li-b","url":"https://www.linkedin.com/feed/"}'
+./browser_context/linkedin/open_linkedin_ghost.sh open
+GHOST_HEADLESS=1 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"linkedin","url":"https://www.linkedin.com/feed/"}'
 ```
 
 Attach to an external CDP endpoint (e.g. Liquid workspace browser):

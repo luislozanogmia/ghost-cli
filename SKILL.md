@@ -13,7 +13,7 @@ Use this skill when browser automation should run through Ghost Browser v3 using
 - A long-lived JSON-line REPL for agentic browser sessions
 - A bridge for vacuum/action workflows over live browser pages
 - Chrome session attachment through the Ghost runtime, including external browser support
-- Native attach to managed Playwright sessions `linkedin_auth_a` and `linkedin_auth_b`
+- LinkedIn auth through `browser_context/linkedin_auth.json`
 - A legacy server shim kept only for older integrations and not supported for production use
 
 ## Architecture
@@ -49,7 +49,8 @@ playwright install chromium
 - `./ghost-cli list-tools`
 - `./ghost-cli call ghost_status`
 - `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"live","cdp_url":"live-chrome"}'`
-- `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}'`
+- `./browser_context/linkedin/open_linkedin_ghost.sh open`
+- `./browser_context/linkedin/open_linkedin_ghost.sh vacuum`
 - `./ghost-cli daemon-status`
 - `./ghost-cli daemon-stop`
 - `./ghost-cli repl`
@@ -59,7 +60,7 @@ playwright install chromium
 - `python3 helpers/ghost_cache_bridge.py action <choice> --value <text>`
 - `python3 deprecated/mcp/ghost_stdio_proxy.py` (archived unsupported shim)
 
-See [FUNCTIONALITY.md](/Users/luis.lozano/.codex/skills/ghost-cli/FUNCTIONALITY.md:1) for the old-tool to CLI mapping.
+See [FUNCTIONALITY.md](FUNCTIONALITY.md) for the old-tool to CLI mapping.
 
 ## Commands You Have
 
@@ -85,7 +86,41 @@ All commands accept optional `instance_id`. Omit it to use the `default` session
 4. Use different `instance_id` values for independent browser sessions.
 5. `./ghost-cli call` is persistent by default; keep the same `instance_id` across calls for long LinkedIn runs.
 6. Do not treat anything under `deprecated/mcp/` as a supported production transport.
-7. For the managed LinkedIn Playwright wrappers, use `playwright_session: "linkedin_auth_a"` or `playwright_session: "linkedin_auth_b"` instead of CDP.
+7. For LinkedIn agent work, use the stable Ghost instance `linkedin` via `./browser_context/linkedin/open_linkedin_ghost.sh`.
+8. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows. That path can cause `ghost_vacuum` to reopen managed Playwright browsers.
+9. For LinkedIn auth backup/refresh, use `browser_context/linkedin_auth.json`; the durable browser profile is `browser_context/linkedin/chrome_profile`.
+
+## LinkedIn Stable Browser
+
+LinkedIn has a dedicated persistent Ghost profile and launcher:
+
+```bash
+./browser_context/linkedin/open_linkedin_ghost.sh open
+./browser_context/linkedin/open_linkedin_ghost.sh vacuum
+```
+
+This creates/reuses:
+
+- Ghost instance: `linkedin`
+- Browser profile: `browser_context/linkedin/chrome_profile`
+- Auth seed/backup: `browser_context/linkedin_auth.json`
+
+Agent contract:
+
+- Always pass `instance_id:"linkedin"` for LinkedIn `ghost_vacuum`, `ghost_click`, `ghost_more`, `ghost_screenshot`, and `ghost_extract`.
+- Keep `GHOST_HEADLESS=1` for normal agent work. In Ghost CLI, non-headless creation can try to attach to live Chrome and may open or attach the wrong browser.
+- Never create a LinkedIn Ghost instance with `playwright_session:"linkedin-json"`. The Playwright session manager may call `open about:blank --headed` during `ghost_vacuum`, which causes repeated browser windows.
+- Do not create new LinkedIn instance names unless Luis explicitly asks for an isolated session.
+
+Manual re-login flow:
+
+```bash
+./browser_context/linkedin/open_linkedin_ghost.sh login
+# Luis logs in visibly and selects any "keep me logged in" / trusted-device prompt.
+./browser_context/linkedin/open_linkedin_ghost.sh save
+```
+
+After `save`, the launcher updates `linkedin_auth.json`, closes the visible login session, and reopens the native Ghost `linkedin` instance.
 
 ## Standard Flow
 1. Check connection
@@ -99,11 +134,11 @@ All commands accept optional `instance_id`. Omit it to use the `default` session
 ```
 Returns a numbered list of every interactive element. Elements are indexed starting at 1.
 
-Managed Playwright session attach:
+LinkedIn stable session:
 
 ```text
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"li-b","playwright_session":"linkedin_auth_b"}'
-./ghost-cli call ghost_vacuum --arguments '{"instance_id":"li-b","url":"https://www.linkedin.com/feed/","limit":20}'
+./browser_context/linkedin/open_linkedin_ghost.sh open
+GHOST_HEADLESS=1 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"linkedin","url":"https://www.linkedin.com/feed/","limit":20}'
 ```
 
 3. Interact
@@ -176,9 +211,10 @@ Use when you need two independent browser sessions simultaneously:
 Always pass the same `instance_id` on every call for that session.
 
 ## Auth Persistence
-LinkedIn and other sites expire sessions. Correct flow:
-1. User logs in manually in the browser
-2. You call `ghost_save_auth` immediately on the same `instance_id`
-3. Ghost saves cookies and loads them automatically on next startup
+LinkedIn and other sites expire sessions. For LinkedIn, use the launcher:
+1. Run `./browser_context/linkedin/open_linkedin_ghost.sh login`
+2. Luis logs in manually in the visible browser.
+3. Run `./browser_context/linkedin/open_linkedin_ghost.sh save`
+4. Continue automation with Ghost `instance_id:"linkedin"`.
 
 Never attempt to type passwords.

@@ -13,7 +13,7 @@ DEFAULT_CODEX_HOME = Path(os.path.expanduser(os.environ.get("CODEX_HOME", "~/.co
 DEFAULT_PWCLI = DEFAULT_CODEX_HOME / "skills" / "playwright" / "scripts" / "playwright_cli.sh"
 DEFAULT_PWMGR = DEFAULT_CODEX_HOME / "skills" / "playwright" / "scripts" / "playwright_manager.py"
 DEFAULT_STATE_PRESET = "linkedin"
-APPROVED_PLAYWRIGHT_SESSIONS = {"linkedin_auth_a", "linkedin_auth_b"}
+APPROVED_PLAYWRIGHT_SESSIONS = {"linkedin-json"}
 
 
 class PlaywrightSessionTransport:

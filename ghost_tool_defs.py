@@ -62,7 +62,9 @@ def get_ghost_tools() -> list[ToolDef]:
                         "type": "string",
                         "description": (
                             "Attach Ghost to a managed Playwright CLI session instead of a Chrome/CDP target. "
-                            "Currently supported values: 'linkedin_auth_a' and 'linkedin_auth_b'."
+                            "For LinkedIn, prefer the stable launcher under "
+                            "browser_context/linkedin/ and the shared auth state at "
+                            "browser_context/linkedin_auth.json."
                         ),
                     },
                     "reuse_only": {
