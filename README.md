@@ -2,6 +2,9 @@
 
 Ghost Browser - AI browser automation via numbered accessibility menus.
 
+<img width="607" height="453" alt="Screenshot at Jun 15 22-08-42" src="https://github.com/user-attachments/assets/f9481c3d-74a7-4049-ae13-20f83b72d59f" />
+
+
 ## Install
 
 ```bash
