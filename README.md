@@ -1,6 +1,6 @@
 # ghost-cli
 
-Ghost Browser -- AI browser automation via numbered accessibility menus.
+Ghost Browser - AI browser automation via numbered accessibility menus.
 
 ## Install
 
