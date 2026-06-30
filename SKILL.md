@@ -31,11 +31,6 @@ browser/session target
 
 Primary path: `./ghost-cli`
 
-Archived legacy server path: `deprecated/mcp/`
-
-The legacy server path is not supported for real browsing runs. It was moved to
-`deprecated/mcp/` so the repo root only carries the supported CLI runtime.
-
 ## One-Time Wiring
 
 From the skill folder:
@@ -58,7 +53,7 @@ playwright install chromium
 - `python3 helpers/ghost_cache_bridge.py --self-test`
 - `python3 helpers/ghost_cache_bridge.py vacuum <temp_file> --url <url> --title <title>`
 - `python3 helpers/ghost_cache_bridge.py action <choice> --value <text>`
-- `python3 deprecated/mcp/ghost_stdio_proxy.py` (archived unsupported shim)
+
 
 See [FUNCTIONALITY.md](FUNCTIONALITY.md) for the old-tool to CLI mapping.
 
@@ -85,10 +80,9 @@ All commands accept optional `instance_id`. Omit it to use the `default` session
 3. Always call `ghost_save_auth` immediately after login so auth persists.
 4. Use different `instance_id` values for independent browser sessions.
 5. `./ghost-cli call` is persistent by default; keep the same `instance_id` across calls for long LinkedIn runs.
-6. Do not treat anything under `deprecated/mcp/` as a supported production transport.
-7. For LinkedIn agent work, use the stable Ghost instance `linkedin` via `./browser_context/linkedin/open_linkedin_ghost.sh`.
-8. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows. That path can cause `ghost_vacuum` to reopen managed Playwright browsers.
-9. For LinkedIn auth backup/refresh, use `browser_context/linkedin_auth.json`; the durable browser profile is `browser_context/linkedin/chrome_profile`.
+6. For LinkedIn agent work, use the stable Ghost instance `linkedin` via `./browser_context/linkedin/open_linkedin_ghost.sh`.
+7. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows. That path can cause `ghost_vacuum` to reopen managed Playwright browsers.
+8. For LinkedIn auth backup/refresh, use `browser_context/linkedin_auth.json`; the durable browser profile is `browser_context/linkedin/chrome_profile`.
 
 ## LinkedIn Stable Browser
 

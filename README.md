@@ -203,13 +203,12 @@ ghost-cli (CLI entrypoint)
       -> helpers/vacuum.py (accessibility tree -> numbered menu)
       -> helpers/execute.py (menu number -> Playwright action)
       -> helpers/extractors.py (built-in extraction recipes)
-      -> chrome_transport.py (Chrome MCP bridge)
+      -> chrome_transport.py (chrome-devtools transport)
       -> playwright_session_transport.py (managed Playwright sessions)
 ```
 
 ## Status
 
-The old Ghost MCP server path is archived under `deprecated/mcp/`. The supported
-path is this CLI runtime only.
+The supported path is this CLI runtime only.
 
 See [FUNCTIONALITY.md](./FUNCTIONALITY.md) for the full CLI command reference.

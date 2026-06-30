@@ -280,6 +280,6 @@ Codes: `ELEMENT_NOT_FOUND`, `NAVIGATION_TIMEOUT`, `NO_BROWSER`, `NO_VACUUM`,
 |-----------|-----------|----------------|-------|
 | Playwright (own browser) | `headless: true/false` | Full | Default for new instances |
 | Live Chrome (CDP) | auto-detect or `cdp_url: "live-chrome"` | Full | Attaches to user's Chrome |
-| Chrome Transport (MCP) | via `chrome_transport.py` | Via instances | Bridge to Chrome MCP |
+| Chrome Transport | via `chrome_transport.py` | Via instances | Consumes chrome-devtools-mcp to reach Chrome |
 | Playwright Session | `playwright_session` param | Via instances | Managed auth sessions |
 | Liquid CDP | auto-detect on `localhost:9222` | N/A | Workspace browser |

@@ -1,8 +1,7 @@
 """
 Ghost runtime host.
 
-This is the supported in-process runtime used by `ghost-cli`. The older server
-entrypoints were archived under `deprecated/mcp/`.
+This is the supported in-process runtime used by `ghost-cli`.
 """
 
 from __future__ import annotations
