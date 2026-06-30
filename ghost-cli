@@ -2,10 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
 
-if [[ -x "$VENV_PYTHON" ]]; then
-  exec "$VENV_PYTHON" "$SCRIPT_DIR/ghost_cli.py" "$@"
-fi
+# Prefer a local venv interpreter. Windows venvs use Scripts/python.exe,
+# POSIX venvs use bin/python. Check both before falling back to python3.
+for VENV_PYTHON in \
+  "$SCRIPT_DIR/.venv/Scripts/python.exe" \
+  "$SCRIPT_DIR/.venv/bin/python"; do
+  if [[ -x "$VENV_PYTHON" ]]; then
+    exec "$VENV_PYTHON" "$SCRIPT_DIR/ghost_cli.py" "$@"
+  fi
+done
 
 exec python3 "$SCRIPT_DIR/ghost_cli.py" "$@"
