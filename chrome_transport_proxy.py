@@ -115,14 +115,19 @@ class GhostChromeProxy:
                     arguments,
                     timeout_seconds=timeout,
                 )
-                if not text and name not in {"close_page"}:
-                    LOG.warning("Tool %s returned empty result -- session may be stale", name)
-                    self._mark_stale()
-                    return web.json_response({"result": None, "error": "session stale, reconnecting"})
+                # File-output tools such as take_snapshot and take_screenshot
+                # legitimately return no text after writing the requested file.
+                # An empty tool result is not evidence that Chrome disconnected.
                 return web.json_response({"result": text, "error": None})
             except Exception as exc:
                 LOG.exception("Tool call %s failed", name)
-                self._mark_stale()
+                # Tool-level failures and timeouts do not invalidate Chrome's
+                # debugging approval. Reattach only when the MCP stdio transport
+                # itself has exited or its response reader has failed.
+                if self._client is None or not self._client.transport_healthy:
+                    self._mark_stale()
+                else:
+                    LOG.warning("Keeping healthy Chrome session after tool failure: %s", name)
                 return web.json_response({"result": None, "error": str(exc)})
 
     async def _connect_once(self) -> bool:

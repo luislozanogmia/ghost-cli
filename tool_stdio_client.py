@@ -47,6 +47,15 @@ class ToolProcessClient:
     def running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
+    @property
+    def transport_healthy(self) -> bool:
+        """Return whether the stdio transport can still accept responses."""
+        return (
+            self.running
+            and self._reader_task is not None
+            and not self._reader_task.done()
+        )
+
     async def start(self) -> None:
         if self.running:
             return
