@@ -18,7 +18,7 @@ Ghost supports three browser attachment modes:
 
 | Mode | Flag | Behavior |
 |------|------|----------|
-| **Live Chrome** | `./ghost-cli live-connect` | Attaches to the user's open Chrome through the shared Chrome MCP broker |
+| **Live Chrome** | `./ghost-cli live-status` | Checks and reuses the user's existing shared Chrome MCP connection |
 | **Playwright headed** | `"headless": false` | Launches own isolated Chromium with a visible window |
 | **Playwright headless** | `"headless": true` | Launches own isolated Chromium with no window (for CI/agents) |
 
@@ -27,7 +27,10 @@ running Chrome. Set `headless: true` to guarantee an isolated Playwright browser
 never touches your Chrome session -- ideal for delegating work to sub-agents.
 
 ```bash
-# Canonical connection to your live Chrome
+# Check first; do not reconnect when connection is already live
+./ghost-cli live-status
+
+# Run only when live-status reports disconnected
 ./ghost-cli live-connect
 
 # Launch isolated headless Chromium (agents/CI)
@@ -40,15 +43,15 @@ never touches your Chrome session -- ideal for delegating work to sub-agents.
 You can also set the `GHOST_HEADLESS=1` environment variable to default all
 `ghost_instance_create` calls to headless mode.
 
-### One-command live connection
+### Shared live connection
 
-`./ghost-cli live-connect` is the canonical command for AI agents. It discovers and reuses the current Chrome through one shared `chrome-devtools-mcp` broker and refuses to fall back to Playwright. Success is returned as JSON with `transport: "chrome-transport"`, `browser_connected: true`, and `playwright_used: false`.
+AI agents must run the read-only `./ghost-cli live-status` check first. When it returns `connection: "live"`, `should_reconnect: false`, and `CONNECTION IS LIVE`, reuse instance `live` and proceed directly to `./ghost-cli call` commands. Run `./ghost-cli live-connect` only when the status is disconnected. The connection uses one shared `chrome-devtools-mcp` broker and refuses to fall back to Playwright.
 
 ## Quick Start
 
 ```bash
-# Connect to the already-open Chrome through the shared Chrome MCP broker
-./ghost-cli live-connect
+# Reuse the already-approved shared Chrome connection
+./ghost-cli live-status
 
 # List available tools
 ./ghost-cli list-tools

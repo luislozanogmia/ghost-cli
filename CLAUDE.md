@@ -18,8 +18,10 @@ Bare Python is only acceptable for **headless mode** (`"headless": true`) where 
 ## Connecting to the User's Chrome
 
 ```bash
-# Canonical connection: discovers/reuses live Chrome through the shared
-# chrome-devtools-mcp broker and rejects any Playwright fallback.
+# Read-only check. If it says connection=live, do not reconnect.
+./ghost-cli live-status
+
+# Run only if live-status says connection=disconnected.
 ./ghost-cli live-connect
 
 # All subsequent calls reuse the same connection -- no more prompts
@@ -28,7 +30,7 @@ Bare Python is only acceptable for **headless mode** (`"headless": true`) where 
 ./ghost-cli call ghost_click --arguments '{"instance_id":"live","choice":5}'
 ```
 
-The command must report `backend=chrome-devtools-mcp`, `transport=chrome-transport`, `browser_connected=true`, and `playwright_used=false`. Do not manually pass a Chrome websocket URL or start another Chrome MCP process.
+`live-status` reports `CONNECTION IS LIVE` and `should_reconnect:false` when the existing approval should be reused. In that state, proceed directly to `./ghost-cli call` commands. A connection must report `backend=chrome-devtools-mcp`, `transport=chrome-transport`, `browser_connected=true`, and `playwright_used=false`. Do not manually pass a Chrome websocket URL or start another Chrome MCP process.
 
 ## Headless Mode (for Agents/CI)
 

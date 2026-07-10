@@ -6,6 +6,8 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from contextlib import suppress
 from pathlib import Path
 
@@ -23,6 +25,13 @@ from shared_runtime import (
     ensure_runtime_dirs,
     pid_exists,
     read_json,
+)
+
+
+_LIVE_PROXY_HEALTH_URL = "http://127.0.0.1:8766/health"
+_LIVE_CONNECTION_MESSAGE = (
+    "CONNECTION IS LIVE — reuse the existing Ghost session. "
+    "Do not reconnect, start another Chrome MCP, or use Playwright."
 )
 
 
@@ -80,6 +89,81 @@ async def _daemon_call_tool(name: str, arguments: dict[str, object]) -> str:
     if not response.get("ok"):
         raise RuntimeError(str(response.get("error", "ghost daemon call failed")))
     return str(response.get("text", ""))
+
+
+def _read_live_proxy_health() -> dict[str, object]:
+    try:
+        with urllib.request.urlopen(_LIVE_PROXY_HEALTH_URL, timeout=1.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+        return {}
+
+
+def _live_instance_is_ready(status: dict[str, object] | None) -> bool:
+    return bool(
+        status
+        and status.get("transport") == "chrome-transport"
+        and status.get("browser_connected") is True
+        and status.get("cdp_url") == "live-chrome"
+    )
+
+
+async def _find_live_instance_status(instance_id: str) -> dict[str, object] | None:
+    if not await _daemon_is_ready():
+        return None
+    instances_text = await _daemon_call_tool("ghost_instance_list", {})
+    try:
+        payload = json.loads(instances_text)
+    except json.JSONDecodeError:
+        return None
+    for status in payload.get("instances", []) if isinstance(payload, dict) else []:
+        if isinstance(status, dict) and status.get("instance_id") == instance_id:
+            return status
+    return None
+
+
+def _live_payload(
+    *,
+    instance_id: str,
+    proxy_health: dict[str, object],
+    instance_status: dict[str, object] | None,
+    reused_existing_connection: bool,
+) -> dict[str, object]:
+    broker_connected = proxy_health.get("connected") is True
+    instance_ready = _live_instance_is_ready(instance_status)
+    connection_live = broker_connected
+    if connection_live:
+        message = _LIVE_CONNECTION_MESSAGE
+        action = (
+            f"Reuse instance '{instance_id}' with ./ghost-cli call commands."
+            if instance_ready
+            else f"The broker is live; ./ghost-cli live-connect --instance-id {instance_id} will register the instance without reconnecting Chrome."
+        )
+    else:
+        message = "Live Chrome is disconnected. Run ./ghost-cli live-connect once."
+        action = f"./ghost-cli live-connect --instance-id {instance_id}"
+    return {
+        "ok": connection_live,
+        "connection": "live" if connection_live else "disconnected",
+        "message": message,
+        "action": action,
+        "next": (
+            f"./ghost-cli call ghost_vacuum --arguments '{{\"instance_id\":\"{instance_id}\",\"limit\":20}}'"
+            if instance_ready
+            else action
+        ),
+        "should_reconnect": not broker_connected,
+        "reused_existing_connection": reused_existing_connection,
+        "instance_id": instance_id,
+        "instance_ready": instance_ready,
+        "backend": "chrome-devtools-mcp",
+        "transport": "chrome-transport" if broker_connected else "disconnected",
+        "browser_connected": broker_connected,
+        "cdp_url": "live-chrome" if broker_connected else "none",
+        "proxy_pid": proxy_health.get("pid"),
+        "playwright_used": False,
+    }
 
 
 def _spawn_daemon() -> int:
@@ -221,12 +305,51 @@ def cmd_daemon_stop(_args) -> None:
     asyncio.run(_run())
 
 
+def cmd_live_status(args) -> None:
+    """Report the shared live-Chrome connection without creating or reconnecting it."""
+
+    async def _run() -> bool:
+        instance_id = str(args.instance_id or "live")
+        proxy_health = await asyncio.to_thread(_read_live_proxy_health)
+        status = await _find_live_instance_status(instance_id)
+        payload = _live_payload(
+            instance_id=instance_id,
+            proxy_health=proxy_health,
+            instance_status=status,
+            reused_existing_connection=proxy_health.get("connected") is True,
+        )
+        print(json.dumps(payload, ensure_ascii=False))
+        return payload["connection"] == "live"
+
+    if not asyncio.run(_run()):
+        raise SystemExit(1)
+
+
 def cmd_live_connect(args) -> None:
     """Attach the canonical Ghost instance to the user's already-open Chrome."""
 
     async def _run() -> None:
-        await _ensure_daemon()
         instance_id = str(args.instance_id or "live")
+        proxy_health = await asyncio.to_thread(_read_live_proxy_health)
+        broker_was_live = proxy_health.get("connected") is True
+
+        if broker_was_live:
+            existing_status = await _find_live_instance_status(instance_id)
+            if _live_instance_is_ready(existing_status):
+                print(
+                    json.dumps(
+                        _live_payload(
+                            instance_id=instance_id,
+                            proxy_health=proxy_health,
+                            instance_status=existing_status,
+                            reused_existing_connection=True,
+                        ),
+                        ensure_ascii=False,
+                    )
+                )
+                return
+
+        await _ensure_daemon()
 
         await _daemon_call_tool(
             "ghost_instance_create",
@@ -255,17 +378,16 @@ def cmd_live_connect(args) -> None:
                 f"cdp_url={cdp_url}. Ghost will not fall back to Playwright."
             )
 
+        proxy_health = await asyncio.to_thread(_read_live_proxy_health)
         print(
             json.dumps(
                 {
-                    "ok": True,
-                    "instance_id": instance_id,
-                    "backend": "chrome-devtools-mcp",
-                    "transport": transport,
-                    "browser_connected": True,
-                    "cdp_url": cdp_url,
-                    "playwright_used": False,
-                    "next": f"./ghost-cli call ghost_vacuum --arguments '{{\"instance_id\":\"{instance_id}\",\"limit\":20}}'",
+                    **_live_payload(
+                        instance_id=instance_id,
+                        proxy_health=proxy_health,
+                        instance_status=status,
+                        reused_existing_connection=broker_was_live,
+                    ),
                 },
                 ensure_ascii=False,
             )
@@ -474,6 +596,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_daemon_stop = sub.add_parser("daemon-stop", help="Ask the persistent Ghost CLI daemon to shut down cleanly.")
     p_daemon_stop.set_defaults(func=cmd_daemon_stop)
+
+    p_live_status = sub.add_parser(
+        "live-status",
+        help="Read the shared live-Chrome state without creating or reconnecting anything.",
+    )
+    p_live_status.add_argument(
+        "--instance-id",
+        default="live",
+        help="Named Ghost instance to inspect (default: live).",
+    )
+    p_live_status.set_defaults(func=cmd_live_status)
 
     p_live_connect = sub.add_parser(
         "live-connect",

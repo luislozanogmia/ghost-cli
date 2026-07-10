@@ -6,6 +6,7 @@ Primary interface: `./ghost-cli`
 
 | Command | Usage | Notes |
 |---------|-------|-------|
+| `live-status` | `./ghost-cli live-status` | Read-only check that tells agents when the shared Chrome connection is live and must be reused |
 | `live-connect` | `./ghost-cli live-connect` | Canonical AI connection to the already-open Chrome through the shared Chrome MCP broker; rejects Playwright fallback |
 | `list-tools` | `./ghost-cli list-tools` | Print all available Ghost tools as JSON |
 | `call` | `./ghost-cli call <tool> --arguments '{...}'` | Invoke a tool via the persistent daemon |
@@ -23,9 +24,15 @@ Primary interface: `./ghost-cli`
 | `--ephemeral` | Run in-process (no daemon), discard state after |
 | `--headless` | Inject `headless: true` into `ghost_instance_create` |
 
-### live-connect
+### live-status and live-connect
 
-Use this whenever an AI needs Luis's already-open Chrome:
+An AI must check the current connection first:
+
+```bash
+./ghost-cli live-status
+```
+
+When it reports `connection: "live"`, do not reconnect; reuse instance `live`. Only when it reports `connection: "disconnected"` run:
 
 ```bash
 ./ghost-cli live-connect
