@@ -12,7 +12,7 @@ Use this skill when browser automation should run through Ghost Browser v3 using
 - A persistent local daemon for `ghost-cli call`, so long workflows survive across shell invocations
 - A long-lived JSON-line REPL for agentic browser sessions
 - A bridge for vacuum/action workflows over live browser pages
-- Chrome session attachment through the Ghost runtime, including external browser support
+- Live Chrome attachment through Ghost's shared chrome-devtools-mcp CDP transport, without launching Playwright
 - LinkedIn auth through `browser_context/linkedin_auth.json`
 - A legacy server shim kept only for older integrations and not supported for production use
 
@@ -31,6 +31,24 @@ browser/session target
 
 Primary path: `./ghost-cli`
 
+## Canonical Live Chrome Command
+
+When Luis says “connect,” “connect to my Chrome,” or “use the live browser,” run exactly:
+
+```bash
+./ghost-cli live-connect
+```
+
+This is the supported AI entrypoint. It starts or reuses the persistent Ghost daemon, discovers the already-open Chrome through the shared `chrome-devtools-mcp` broker, creates or reuses the `live` instance, and validates all of the following before returning success:
+
+- `backend: chrome-devtools-mcp`
+- `transport: chrome-transport`
+- `browser_connected: true`
+- `cdp_url: live-chrome`
+- `playwright_used: false`
+
+Do not manually read `DevToolsActivePort`, pass a websocket URL, start another `chrome-devtools-mcp`, or use Playwright for live Chrome. Every AI/provider uses this same command and shared broker.
+
 ## One-Time Wiring
 
 From the skill folder:
@@ -41,9 +59,10 @@ playwright install chromium
 ```
 
 ## Runner
+- `./ghost-cli live-connect` — canonical connection to Luis's already-open Chrome
 - `./ghost-cli list-tools`
 - `./ghost-cli call ghost_status`
-- `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"live","cdp_url":"live-chrome"}'`
+- `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"live","cdp_url":"live-chrome"}'` — lower-level equivalent; prefer `live-connect`
 - `./browser_context/linkedin/open_linkedin_ghost.sh open`
 - `./browser_context/linkedin/open_linkedin_ghost.sh vacuum`
 - `./ghost-cli daemon-status`
@@ -75,14 +94,16 @@ See [FUNCTIONALITY.md](FUNCTIONALITY.md) for the old-tool to CLI mapping.
 All commands accept optional `instance_id`. Omit it to use the `default` session.
 
 ## Critical Rules
-1. Always call `ghost_status` before assuming the browser is connected.
-2. Always re-vacuum after navigation; element numbers are only valid for the current page state.
-3. Always call `ghost_save_auth` immediately after login so auth persists.
-4. Use different `instance_id` values for independent browser sessions.
-5. `./ghost-cli call` is persistent by default; keep the same `instance_id` across calls for long LinkedIn runs.
-6. For LinkedIn agent work, use the stable Ghost instance `linkedin` via `./browser_context/linkedin/open_linkedin_ghost.sh`.
-7. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows. That path can cause `ghost_vacuum` to reopen managed Playwright browsers.
-8. For LinkedIn auth backup/refresh, use `browser_context/linkedin_auth.json`; the durable browser profile is `browser_context/linkedin/chrome_profile`.
+1. For the user's already-open Chrome, always run `./ghost-cli live-connect` first.
+2. Treat success as valid only when it reports `chrome-transport`, `browser_connected:true`, and `playwright_used:false`.
+3. Call `ghost_status` before assuming any non-live named browser instance is connected.
+4. Always re-vacuum after navigation; element numbers are only valid for the current page state.
+5. Always call `ghost_save_auth` immediately after login so auth persists.
+6. Use different `instance_id` values for independent browser sessions.
+7. `./ghost-cli call` is persistent by default; keep the same `instance_id` across calls for long LinkedIn runs.
+8. For LinkedIn agent work, use the stable Ghost instance `linkedin` via `./browser_context/linkedin/open_linkedin_ghost.sh`.
+9. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows. That path can cause `ghost_vacuum` to reopen managed Playwright browsers.
+10. For LinkedIn auth backup/refresh, use `browser_context/linkedin_auth.json`; the durable browser profile is `browser_context/linkedin/chrome_profile`.
 
 ## LinkedIn Stable Browser
 
@@ -117,9 +138,9 @@ Manual re-login flow:
 After `save`, the launcher updates `linkedin_auth.json`, closes the visible login session, and reopens the native Ghost `linkedin` instance.
 
 ## Standard Flow
-1. Check connection
+1. Connect to Luis's live Chrome
 ```text
-./ghost-cli call ghost_status
+./ghost-cli live-connect
 ```
 
 2. Read the page

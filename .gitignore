@@ -14,6 +14,7 @@ playwright_auth.json
 *.lock
 ghost_daemon.pid
 ghost_chrome_proxy.pid
+chrome_transport_proxy.pid
 ghost_server.log
 *.log
 runtime/

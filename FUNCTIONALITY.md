@@ -6,6 +6,7 @@ Primary interface: `./ghost-cli`
 
 | Command | Usage | Notes |
 |---------|-------|-------|
+| `live-connect` | `./ghost-cli live-connect` | Canonical AI connection to the already-open Chrome through the shared Chrome MCP broker; rejects Playwright fallback |
 | `list-tools` | `./ghost-cli list-tools` | Print all available Ghost tools as JSON |
 | `call` | `./ghost-cli call <tool> --arguments '{...}'` | Invoke a tool via the persistent daemon |
 | `repl` | `./ghost-cli repl` | Interactive JSON-line session |
@@ -18,9 +19,19 @@ Primary interface: `./ghost-cli`
 | Flag | Effect |
 |------|--------|
 | `--arguments '{"key":"val"}'` | JSON arguments for the tool |
-| `--json` | Output as JSON envelope instead of raw text |
+| `--json-output` | Output as JSON envelope instead of raw text |
 | `--ephemeral` | Run in-process (no daemon), discard state after |
 | `--headless` | Inject `headless: true` into `ghost_instance_create` |
+
+### live-connect
+
+Use this whenever an AI needs Luis's already-open Chrome:
+
+```bash
+./ghost-cli live-connect
+```
+
+The command discovers and reuses the shared `chrome-devtools-mcp` broker, creates or reuses instance `live`, and succeeds only with `transport: "chrome-transport"`, `browser_connected: true`, and `playwright_used: false`. Use `--instance-id <name>` only when a different shared instance name is explicitly required.
 
 ## Tool Reference
 

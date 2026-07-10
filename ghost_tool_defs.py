@@ -54,8 +54,8 @@ def get_ghost_tools() -> list[ToolDef]:
                             "\"http://localhost:9222\" for Liquid's embedded Chrome). "
                             "When set, Ghost controls the external browser instead of launching its own. "
                             "Use the special value \"live-chrome\" to attach to the user's currently open "
-                            "Chrome session through its DevTools websocket, bypassing the chrome-devtools-mcp "
-                            "auto-connect proxy."
+                            "Chrome session through Ghost's shared chrome-devtools-mcp CDP transport. "
+                            "This is the supported live-Chrome path and does not launch Playwright."
                         ),
                     },
                     "playwright_session": {

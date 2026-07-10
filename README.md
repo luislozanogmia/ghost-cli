@@ -18,7 +18,7 @@ Ghost supports three browser attachment modes:
 
 | Mode | Flag | Behavior |
 |------|------|----------|
-| **Live Chrome** | (default) | Attaches to the user's open Chrome via DevToolsActivePort websocket |
+| **Live Chrome** | `./ghost-cli live-connect` | Attaches to the user's open Chrome through the shared Chrome MCP broker |
 | **Playwright headed** | `"headless": false` | Launches own isolated Chromium with a visible window |
 | **Playwright headless** | `"headless": true` | Launches own isolated Chromium with no window (for CI/agents) |
 
@@ -27,8 +27,8 @@ running Chrome. Set `headless: true` to guarantee an isolated Playwright browser
 never touches your Chrome session -- ideal for delegating work to sub-agents.
 
 ```bash
-# Attach to your live Chrome (default)
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"live"}'
+# Canonical connection to your live Chrome
+./ghost-cli live-connect
 
 # Launch isolated headless Chromium (agents/CI)
 ./ghost-cli call ghost_instance_create --arguments '{"instance_id":"worker","headless":true}'
@@ -40,9 +40,16 @@ never touches your Chrome session -- ideal for delegating work to sub-agents.
 You can also set the `GHOST_HEADLESS=1` environment variable to default all
 `ghost_instance_create` calls to headless mode.
 
+### One-command live connection
+
+`./ghost-cli live-connect` is the canonical command for AI agents. It discovers and reuses the current Chrome through one shared `chrome-devtools-mcp` broker and refuses to fall back to Playwright. Success is returned as JSON with `transport: "chrome-transport"`, `browser_connected: true`, and `playwright_used: false`.
+
 ## Quick Start
 
 ```bash
+# Connect to the already-open Chrome through the shared Chrome MCP broker
+./ghost-cli live-connect
+
 # List available tools
 ./ghost-cli list-tools
 

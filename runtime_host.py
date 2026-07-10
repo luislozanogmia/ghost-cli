@@ -18,7 +18,7 @@ import urllib.request
 import base64
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -190,7 +190,7 @@ _instances: dict[str, "GhostInstance"] = {}
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _sanitize_error(msg: str) -> str:
@@ -554,29 +554,38 @@ class GhostInstance:
         liquid_target = self._liquid_webview_target()
         attach_live_chrome = _is_live_chrome_attach(self.cdp_url)
 
-        # Standard CLI default: attach directly to the user's current Chrome via
-        # the DevTools websocket advertised in DevToolsActivePort, not via the
-        # chrome-devtools-mcp auto-connect proxy.
-        # SKIP auto-attach when headless=True -- the user explicitly wants an
-        # isolated Playwright-owned browser, not their live Chrome.
-        if liquid_target is None and (attach_live_chrome or not self.cdp_url) and not self.headless:
-            live_chrome_ws = _resolve_live_chrome_ws_endpoint()
-            if live_chrome_ws:
-                if self.cdp_url != live_chrome_ws:
-                    LOGGER.info(
-                        "Ghost instance=%s resolved live Chrome websocket target=%s",
-                        self.instance_id,
-                        live_chrome_ws,
-                    )
-                self.cdp_url = live_chrome_ws
-                attach_live_chrome = False
-            elif attach_live_chrome:
-                raise RuntimeError(
-                    "Could not resolve the live Chrome DevTools websocket. "
-                    "Enable remote debugging in chrome://inspect/#remote-debugging first."
+        # Live Chrome's current remote-debugging endpoint is brokered by
+        # chrome-devtools-mcp. Sending its DevToolsActivePort websocket through
+        # Playwright's connect_over_cdp() can establish the socket but then hang
+        # forever during protocol initialization. Route live Chrome through the
+        # shared Chrome transport instead. Explicit external CDP URLs (Liquid,
+        # localhost:9222, and similar) continue to use direct Playwright CDP.
+        # SKIP auto-attach when headless=True: that mode deliberately launches an
+        # isolated Playwright-owned browser.
+        use_live_chrome_transport = (
+            liquid_target is None
+            and not self.headless
+            and (attach_live_chrome or not self.cdp_url)
+        )
+        if use_live_chrome_transport:
+            if self._chrome_transport is None:
+                self._chrome_transport = ChromeTransportRuntime(
+                    instance_id=self.instance_id,
+                    context_dir=self.context_dir,
+                    auto_connect=True,
+                    logger=LOGGER,
                 )
-
-        use_direct_playwright_cdp = bool(self.cdp_url and not attach_live_chrome)
+            await self._chrome_transport.ensure_browser()
+            self.cdp_url = "live-chrome"
+            self.context = None
+            self.page = None
+            self._browser = None
+            self._playwright_session_transport = None
+            LOGGER.info(
+                "Ghost live Chrome attached instance=%s transport=chrome-devtools-mcp",
+                self.instance_id,
+            )
+            return
 
         if self.context is not None:
             try:
@@ -1597,7 +1606,15 @@ class GhostInstance:
             await self._ensure_browser_locked()
 
             if self._chrome_transport is not None:
-                return "Tab management not supported on Chrome transport instances. Use separate Ghost instances instead."
+                pages = await self._chrome_transport.list_pages()
+                lines = [f"=== Tabs ({len(pages)}) ==="]
+                for i, page in enumerate(pages):
+                    marker = " *" if page.get("selected") else ""
+                    lines.append(f"  [{i}] {page.get('url') or '(unknown)'}{marker}")
+                lines.append("")
+                lines.append("* = active tab. Use ghost_tab_switch to change.")
+                self._touch()
+                return "\n".join(lines)
             if self._playwright_session_transport is not None:
                 return "Tab management not supported on Playwright session instances. Use separate Ghost instances instead."
 
@@ -1624,7 +1641,20 @@ class GhostInstance:
         async with self.lock:
             await self._ensure_browser_locked()
 
-            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+            if self._chrome_transport is not None:
+                page = await self._chrome_transport.create_tab(url)
+                pages = await self._chrome_transport.list_pages()
+                tab_index = next(
+                    (i for i, item in enumerate(pages) if item.get("pageId") == page.get("pageId")),
+                    max(len(pages) - 1, 0),
+                )
+                self.page_url = str(page.get("url") or url or "about:blank")
+                self.page_title = self.page_url
+                self.vacuum_cache = None
+                self.current_offset = 0
+                self._touch()
+                return f"Opened new tab [{tab_index}]: {self.page_url}\nTotal tabs: {len(pages)}"
+            if self._playwright_session_transport is not None:
                 return "Tab management not supported on this transport. Use separate Ghost instances instead."
 
             if self.context is None:
@@ -1655,7 +1685,20 @@ class GhostInstance:
         async with self.lock:
             await self._ensure_browser_locked()
 
-            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+            if self._chrome_transport is not None:
+                pages = await self._chrome_transport.list_pages()
+                if tab_index < 0 or tab_index >= len(pages):
+                    return GhostError.fmt(GhostError.TAB_NOT_FOUND, f"Tab index {tab_index} out of range (0-{len(pages)-1}).")
+                page = pages[tab_index]
+                await self._chrome_transport._select_page(int(page["pageId"]))
+                self.page_url = str(page.get("url") or "")
+                self.page_title = self.page_url
+                self.vacuum_cache = None
+                self.current_offset = 0
+                self._touch()
+                menu = await self._vacuum_page_locked(wait="none")
+                return f"Switched to tab [{tab_index}]: {self.page_title}\n\n{menu}"
+            if self._playwright_session_transport is not None:
                 return "Tab management not supported on this transport. Use separate Ghost instances instead."
 
             if self.context is None:
@@ -1688,7 +1731,29 @@ class GhostInstance:
         async with self.lock:
             await self._ensure_browser_locked()
 
-            if self._chrome_transport is not None or self._playwright_session_transport is not None:
+            if self._chrome_transport is not None:
+                pages = await self._chrome_transport.list_pages()
+                if tab_index < 0 or tab_index >= len(pages):
+                    return GhostError.fmt(GhostError.TAB_NOT_FOUND, f"Tab index {tab_index} out of range (0-{len(pages)-1}).")
+                if len(pages) <= 1:
+                    return GhostError.fmt(GhostError.INVALID_INPUT, "Cannot close the last remaining tab. Use ghost_instance_close to close the entire instance.")
+                closing_page = pages[tab_index]
+                closing_url = str(closing_page.get("url") or "")
+                await self._chrome_transport.call_tool(
+                    "close_page",
+                    {"pageId": int(closing_page["pageId"])},
+                    timeout_seconds=20.0,
+                )
+                remaining_pages = await self._chrome_transport.list_pages()
+                self.page_url = str(
+                    next((page.get("url") for page in remaining_pages if page.get("selected")), "")
+                )
+                self.page_title = self.page_url
+                self.vacuum_cache = None
+                self.current_offset = 0
+                self._touch()
+                return f"Closed tab [{tab_index}]: {closing_url}\nRemaining tabs: {len(remaining_pages)}"
+            if self._playwright_session_transport is not None:
                 return "Tab management not supported on this transport. Use separate Ghost instances instead."
 
             if self.context is None:
@@ -2086,12 +2151,14 @@ async def call_tool(name: str, arguments: dict | None) -> str:
             return json.dumps(payload, indent=2)
 
         if name == "ghost_instance_list":
-            from datetime import timezone, timedelta
+            from datetime import timedelta
             expire_threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
             expired = []
             for inst in await _list_instances():
                 try:
                     last = datetime.fromisoformat(inst.last_used_at.replace("Z", "+00:00"))
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=timezone.utc)
                     if last < expire_threshold and not inst.browser_connected:
                         expired.append(inst.instance_id)
                 except (ValueError, AttributeError):

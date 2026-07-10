@@ -129,6 +129,9 @@ class GhostChromeProxy:
         try:
             command, args = _tool_command()
             client = ToolProcessClient(command=command, args=args, cwd=Path(__file__).parent)
+            # Register the client before initialization so the exception path
+            # can always close the whole npm/node process group.
+            self._client = client
             await client.initialize()
             tools = await client.list_tools()
             self._tools = [
@@ -139,7 +142,6 @@ class GhostChromeProxy:
                 }
                 for tool in tools
             ]
-            self._client = client
             self._session_healthy = True
             self._session_cycle_event.clear()
             LOG.info("Connected -- %d tools cached", len(self._tools))

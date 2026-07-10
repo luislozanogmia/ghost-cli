@@ -69,6 +69,19 @@ async def _daemon_is_ready() -> bool:
     return bool(response.get("ok"))
 
 
+async def _daemon_call_tool(name: str, arguments: dict[str, object]) -> str:
+    response = await _daemon_request(
+        {
+            "type": "call_tool",
+            "tool": name,
+            "arguments": arguments,
+        }
+    )
+    if not response.get("ok"):
+        raise RuntimeError(str(response.get("error", "ghost daemon call failed")))
+    return str(response.get("text", ""))
+
+
 def _spawn_daemon() -> int:
     ensure_runtime_dirs()
     command = [sys.executable, str(Path(__file__).with_name("ghost_daemon.py"))]
@@ -206,6 +219,74 @@ def cmd_daemon_stop(_args) -> None:
         print(json.dumps(response, ensure_ascii=False))
 
     asyncio.run(_run())
+
+
+def cmd_live_connect(args) -> None:
+    """Attach the canonical Ghost instance to the user's already-open Chrome."""
+
+    async def _run() -> None:
+        await _ensure_daemon()
+        instance_id = str(args.instance_id or "live")
+
+        await _daemon_call_tool(
+            "ghost_instance_create",
+            {
+                "instance_id": instance_id,
+                "cdp_url": "live-chrome",
+            },
+        )
+        status_text = await _daemon_call_tool(
+            "ghost_status",
+            {"instance_id": instance_id},
+        )
+        try:
+            status = json.loads(status_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Ghost returned invalid live status: {status_text}") from exc
+
+        transport = status.get("transport")
+        connected = status.get("browser_connected") is True
+        cdp_url = status.get("cdp_url")
+        if transport != "chrome-transport" or not connected or cdp_url != "live-chrome":
+            raise RuntimeError(
+                "Live Chrome attachment failed strict validation: expected "
+                "transport=chrome-transport, browser_connected=true, cdp_url=live-chrome; "
+                f"got transport={transport}, browser_connected={status.get('browser_connected')}, "
+                f"cdp_url={cdp_url}. Ghost will not fall back to Playwright."
+            )
+
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "instance_id": instance_id,
+                    "backend": "chrome-devtools-mcp",
+                    "transport": transport,
+                    "browser_connected": True,
+                    "cdp_url": cdp_url,
+                    "playwright_used": False,
+                    "next": f"./ghost-cli call ghost_vacuum --arguments '{{\"instance_id\":\"{instance_id}\",\"limit\":20}}'",
+                },
+                ensure_ascii=False,
+            )
+        )
+
+    try:
+        asyncio.run(_run())
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "command": "live-connect",
+                    "error": str(exc),
+                    "playwright_fallback": False,
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def cmd_repl(_args) -> None:
@@ -393,6 +474,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_daemon_stop = sub.add_parser("daemon-stop", help="Ask the persistent Ghost CLI daemon to shut down cleanly.")
     p_daemon_stop.set_defaults(func=cmd_daemon_stop)
+
+    p_live_connect = sub.add_parser(
+        "live-connect",
+        help="Attach to the already-open Chrome through the shared Chrome MCP broker (never Playwright).",
+    )
+    p_live_connect.add_argument(
+        "--instance-id",
+        default="live",
+        help="Named Ghost instance to create or reuse (default: live).",
+    )
+    p_live_connect.set_defaults(func=cmd_live_connect)
 
     p_batch = sub.add_parser("batch", help="Batch extract data from multiple URLs.")
     p_batch.add_argument("--queries", required=True, help="JSON file or inline JSON array of {url, recipe?, script?, label?}")

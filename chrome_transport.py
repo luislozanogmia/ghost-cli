@@ -140,36 +140,47 @@ class ChromeTransportRuntime:
         raise RuntimeError(f"Chrome debug port {self._browser_debug_port} did not come up in time.")
 
     async def _ensure_proxy_running(self) -> None:
+        proxy_running = False
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(f"{_PROXY_URL}/health", timeout=3.0)
                 if resp.status_code == 200:
-                    return
-        except (httpx.ConnectError, httpx.TimeoutException):
+                    proxy_running = True
+                    if bool(resp.json().get("connected")):
+                        return
+        except (httpx.ConnectError, httpx.TimeoutException, ValueError):
             pass
 
-        self._log("Starting Ghost Chrome Proxy...")
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-        subprocess.Popen(
-            [str(_PROXY_PYTHON), str(_PROXY_SCRIPT)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            creationflags=creationflags,
-        )
-        for _ in range(30):
+        if not proxy_running:
+            self._log("Starting Ghost Chrome Proxy...")
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            subprocess.Popen(
+                [str(_PROXY_PYTHON), str(_PROXY_SCRIPT)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+
+        # The HTTP listener comes up before chrome-devtools-mcp finishes its
+        # browser handshake. A 200 response alone is not an attachment; wait
+        # until the proxy explicitly reports connected=true.
+        for _ in range(120):
             await asyncio.sleep(0.5)
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(f"{_PROXY_URL}/health", timeout=2.0)
-                    if resp.status_code == 200:
+                    if resp.status_code == 200 and bool(resp.json().get("connected")):
                         self._log("Ghost Chrome Proxy is ready")
                         return
-            except (httpx.ConnectError, httpx.TimeoutException):
+            except (httpx.ConnectError, httpx.TimeoutException, ValueError):
                 continue
-        raise RuntimeError("Ghost Chrome Proxy did not start in time")
+        raise RuntimeError(
+            "Ghost Chrome Proxy started but did not attach to live Chrome within 60 seconds. "
+            "Close competing chrome-devtools-mcp clients and confirm that remote debugging is enabled."
+        )
 
     async def ensure_browser(self) -> None:
         if self.auto_connect:

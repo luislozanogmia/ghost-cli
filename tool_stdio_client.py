@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
+import subprocess
 from itertools import count
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,14 @@ class ToolProcessClient:
     async def start(self) -> None:
         if self.running:
             return
+        process_group_args: dict[str, Any] = {}
+        if os.name == "nt":
+            process_group_args["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            # Keep the MCP subprocess and its npm/node descendants out of the
+            # Ghost daemon's process group so failed starts can be reaped as one
+            # unit without terminating Ghost itself.
+            process_group_args["start_new_session"] = True
         self._proc = await asyncio.create_subprocess_exec(
             self.command,
             *self.args,
@@ -56,6 +66,7 @@ class ToolProcessClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            **process_group_args,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
@@ -143,9 +154,11 @@ class ToolProcessClient:
     async def _write_message(self, payload: dict[str, Any]) -> None:
         if self._proc is None or self._proc.stdin is None:
             raise ToolProcessError("Tool process stdin is unavailable.")
-        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        header = f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii")
-        self._proc.stdin.write(header + raw)
+        # MCP stdio uses one JSON-RPC message per line. The old LSP-style
+        # Content-Length framing is ignored by current chrome-devtools-mcp and
+        # leaves initialization hanging forever.
+        raw = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+        self._proc.stdin.write(raw)
         await self._proc.stdin.drain()
 
     async def _read_loop(self) -> None:
@@ -179,27 +192,14 @@ class ToolProcessClient:
 
     async def _read_message(self) -> dict[str, Any] | None:
         assert self._proc is not None and self._proc.stdout is not None
-        headers: dict[str, str] = {}
-
         while True:
             line = await self._proc.stdout.readline()
             if not line:
                 return None
-            if line in {b"\r\n", b"\n"}:
-                break
             decoded = line.decode("utf-8").strip()
             if not decoded:
-                break
-            if ":" not in decoded:
                 continue
-            key, value = decoded.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-
-        length = int(headers.get("content-length", "0"))
-        if length <= 0:
-            return {}
-        body = await self._proc.stdout.readexactly(length)
-        return json.loads(body.decode("utf-8"))
+            return json.loads(decoded)
 
     async def _drain_stderr(self) -> None:
         if self._proc is None or self._proc.stderr is None:
@@ -230,15 +230,28 @@ class ToolProcessClient:
                 pass
 
         if self._proc is not None:
+            proc = self._proc
             if self._proc.stdin is not None:
                 self._proc.stdin.close()
-            if self._proc.returncode is None:
-                self._proc.terminate()
+            if proc.returncode is None:
+                if os.name == "nt":
+                    proc.terminate()
+                else:
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
                 try:
-                    await asyncio.wait_for(self._proc.wait(), 5.0)
+                    await asyncio.wait_for(proc.wait(), 5.0)
                 except asyncio.TimeoutError:
-                    self._proc.kill()
-                    await self._proc.wait()
+                    if os.name == "nt":
+                        proc.kill()
+                    else:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    await proc.wait()
 
         self._proc = None
         self._reader_task = None
