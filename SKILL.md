@@ -1,6 +1,6 @@
 ---
 name: ghost-cli
-description: Ghost Browser v3 browser automation via the `ghost-cli` direct runtime. The old server path remains only as an unsupported legacy shim.
+description: Ghost Browser v3 browser automation via the ghost-cli direct runtime. Persistent daemon, headless or live Chrome.
 ---
 
 # Ghost CLI
@@ -12,9 +12,8 @@ Use this skill when browser automation should run through Ghost Browser v3 using
 - A persistent local daemon for `ghost-cli call`, so long workflows survive across shell invocations
 - A long-lived JSON-line REPL for agentic browser sessions
 - A bridge for vacuum/action workflows over live browser pages
-- Live Chrome attachment through Ghost's shared chrome-devtools-mcp CDP transport, without launching Playwright
+- Live Chrome attachment via CDP transport, without launching Playwright
 - LinkedIn auth through `browser_context/linkedin_auth.json`
-- A legacy server shim kept only for older integrations and not supported for production use
 
 ## Architecture
 ```text
@@ -24,22 +23,22 @@ ghost_cli.py               <- the supported entrypoint
   ↓
 runtime host               <- in-process Ghost runtime
   ↓
-transport layer            <- live Chrome, direct CDP, or Playwright session
+transport layer            <- live Chrome CDP or Playwright session
   ↓
 browser/session target
 ```
 
 Primary path: `./ghost-cli`
 
-## Live Connection Guard — Read This First
+## Live Connection Guard
 
-When Luis says “connect,” “connect to my Chrome,” or “use the live browser,” check the shared connection without changing it:
+When Luis says "connect," "connect to my Chrome," or "use the live browser," check the shared connection without changing it:
 
 ```bash
 ./ghost-cli live-status
 ```
 
-If it reports `connection: "live"` and `should_reconnect: false`, the connection is already approved. Reuse instance `live` immediately with `./ghost-cli call`; **do not run another connector, start another Chrome MCP, or use Playwright**.
+If it reports `connection: "live"` and `should_reconnect: false`, the connection is already approved. Reuse instance `live` immediately with `./ghost-cli call`; do not reconnect or use Playwright.
 
 Only when `live-status` reports `connection: "disconnected"` should an agent run:
 
@@ -47,15 +46,13 @@ Only when `live-status` reports `connection: "disconnected"` should an agent run
 ./ghost-cli live-connect
 ```
 
-`live-connect` starts or reuses the persistent Ghost daemon, discovers the already-open Chrome through the shared `chrome-devtools-mcp` broker, creates or reuses the `live` instance, and validates all of the following before returning success:
+`live-connect` starts or reuses the persistent Ghost daemon, discovers the already-open Chrome, creates or reuses the `live` instance, and validates:
 
-- `backend: chrome-devtools-mcp`
 - `transport: chrome-transport`
 - `browser_connected: true`
-- `cdp_url: live-chrome`
 - `playwright_used: false`
 
-Do not manually read `DevToolsActivePort`, pass a websocket URL, start another `chrome-devtools-mcp`, or use Playwright for live Chrome. Every AI/provider uses this same command and shared broker.
+Do not manually read `DevToolsActivePort` or pass a websocket URL. Use the daemon commands.
 
 ## One-Time Wiring
 
@@ -67,25 +64,17 @@ playwright install chromium
 ```
 
 ## Runner
-- `./ghost-cli live-status` — read-only connection check; run this before any connection attempt
-- `./ghost-cli live-connect` — canonical connection to Luis's already-open Chrome
+- `./ghost-cli live-status` -- read-only connection check; run before any connection attempt
+- `./ghost-cli live-connect` -- canonical connection to Luis's already-open Chrome
 - `./ghost-cli list-tools`
 - `./ghost-cli call ghost_status`
-- `./ghost-cli call ghost_instance_create --arguments '{"instance_id":"live","cdp_url":"live-chrome"}'` — lower-level equivalent; prefer `live-connect`
 - `./browser_context/linkedin/open_linkedin_ghost.sh open`
 - `./browser_context/linkedin/open_linkedin_ghost.sh vacuum`
 - `./ghost-cli daemon-status`
 - `./ghost-cli daemon-stop`
 - `./ghost-cli repl`
-- `python3 helpers/ghost_cache_bridge.py --help`
-- `python3 helpers/ghost_cache_bridge.py --self-test`
-- `python3 helpers/ghost_cache_bridge.py vacuum <temp_file> --url <url> --title <title>`
-- `python3 helpers/ghost_cache_bridge.py action <choice> --value <text>`
 
-
-See [FUNCTIONALITY.md](FUNCTIONALITY.md) for the old-tool to CLI mapping.
-
-## Commands You Have
+## Commands
 
 | Tool | What it does |
 |---|---|
@@ -99,12 +88,18 @@ See [FUNCTIONALITY.md](FUNCTIONALITY.md) for the old-tool to CLI mapping.
 | `ghost_instance_create` | Create or reuse a named Chrome session, optionally navigating to a URL |
 | `ghost_instance_list` | List all active named sessions |
 | `ghost_instance_close` | Close a named session without deleting its profile |
+| `ghost_read` | Read page text content |
+| `ghost_eval` | Run JS in the browser context |
+| `ghost_key` | Send keyboard input |
+| `ghost_tab_list` | List open tabs |
+| `ghost_tab_switch` | Switch to a tab by index |
+| `ghost_tab_open` | Open a new tab |
 
 All commands accept optional `instance_id`. Omit it to use the `default` session.
 
-## Critical Rules
+## Rules
 1. For the user's already-open Chrome, always run the read-only `./ghost-cli live-status` first.
-2. If it says `connection:live`, reuse instance `live`; do not reconnect or start another Chrome MCP.
+2. If it says `connection:live`, reuse instance `live`; do not reconnect.
 3. Run `./ghost-cli live-connect` only when `live-status` says `connection:disconnected`.
 4. Treat success as valid only when it reports `chrome-transport`, `browser_connected:true`, and `playwright_used:false`.
 5. Call `ghost_status` before assuming any non-live named browser instance is connected.
@@ -113,7 +108,7 @@ All commands accept optional `instance_id`. Omit it to use the `default` session
 8. Use different `instance_id` values for independent browser sessions.
 9. `./ghost-cli call` is persistent by default; keep the same `instance_id` across calls for long LinkedIn runs.
 10. For LinkedIn agent work, use the stable Ghost instance `linkedin` via `./browser_context/linkedin/open_linkedin_ghost.sh`.
-11. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows. That path can cause `ghost_vacuum` to reopen managed Playwright browsers.
+11. Do not use `playwright_session` / `linkedin-json` for LinkedIn Ghost workflows.
 12. For LinkedIn auth backup/refresh, use `browser_context/linkedin_auth.json`; the durable browser profile is `browser_context/linkedin/chrome_profile`.
 
 ## LinkedIn Stable Browser
@@ -133,9 +128,9 @@ This creates/reuses:
 
 Agent contract:
 
-- Always pass `instance_id:"linkedin"` for LinkedIn `ghost_vacuum`, `ghost_click`, `ghost_more`, `ghost_screenshot`, and `ghost_extract`.
-- Keep `GHOST_HEADLESS=1` for normal agent work. In Ghost CLI, non-headless creation can try to attach to live Chrome and may open or attach the wrong browser.
-- Never create a LinkedIn Ghost instance with `playwright_session:"linkedin-json"`. The Playwright session manager may call `open about:blank --headed` during `ghost_vacuum`, which causes repeated browser windows.
+- Always pass `instance_id:"linkedin"` for LinkedIn commands.
+- Keep `GHOST_HEADLESS=1` for normal agent work. Non-headless creation can try to attach to live Chrome and may open the wrong browser.
+- Never create a LinkedIn Ghost instance with `playwright_session:"linkedin-json"`.
 - Do not create new LinkedIn instance names unless Luis explicitly asks for an isolated session.
 
 Manual re-login flow:
@@ -150,31 +145,31 @@ After `save`, the launcher updates `linkedin_auth.json`, closes the visible logi
 
 ## Standard Flow
 1. Check the existing connection
-```text
+```bash
 ./ghost-cli live-status
 ```
 
 If and only if it reports `connection: "disconnected"`:
 
-```text
+```bash
 ./ghost-cli live-connect
 ```
 
 2. Read the page
-```text
+```bash
 ./ghost-cli call ghost_vacuum
 ```
 Returns a numbered list of every interactive element. Elements are indexed starting at 1.
 
 LinkedIn stable session:
 
-```text
+```bash
 ./browser_context/linkedin/open_linkedin_ghost.sh open
 GHOST_HEADLESS=1 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"linkedin","url":"https://www.linkedin.com/feed/","limit":20}'
 ```
 
 3. Interact
-```text
+```bash
 ./ghost-cli call ghost_click --arguments '{"choice":7}'
 ./ghost-cli call ghost_more
 ./ghost-cli call ghost_screenshot
@@ -184,35 +179,34 @@ GHOST_HEADLESS=1 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"link
 
 ## Extraction Recipes
 
-Ghost includes pre-built extraction recipes for common page patterns. These run
-JS in the browser and return clean JSON -- no DOM noise reaches your context.
+Ghost includes pre-built extraction recipes for common page patterns. These run JS in the browser and return clean JSON.
 
 ### LinkedIn Search Results
-```text
+```bash
 ./ghost-cli call ghost_extract --arguments '{"instance_id":"li","recipe":"linkedin_search","max_items":10}'
 ```
 Returns: `[{url, name, title, location, snippet}, ...]`
 
 ### LinkedIn Profile
-```text
+```bash
 ./ghost-cli call ghost_extract --arguments '{"instance_id":"li","recipe":"linkedin_profile"}'
 ```
 Returns: `{name, headline, location, about, experiences, education}`
 
 ### All Page Links
-```text
+```bash
 ./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","recipe":"page_links","max_items":20}'
 ```
 Returns: `[{text, href}, ...]`
 
 ### Page Metadata
-```text
+```bash
 ./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","recipe":"page_meta"}'
 ```
 Returns: `{title, url, description, og_title, og_image, canonical, h1}`
 
 ### Custom Extraction
-```text
+```bash
 ./ghost-cli call ghost_extract --arguments '{"instance_id":"demo","script":"() => [...document.querySelectorAll(\"h2\")].map(e => e.textContent)"}'
 ```
 
@@ -220,19 +214,26 @@ Returns: `{title, url, description, og_title, og_image, canonical, h1}`
 
 Extract data from multiple URLs in one command:
 
-```text
-./ghost-cli batch --queries '[{"url":"https://linkedin.com/search/results/people/?keywords=fintech+austin","label":"fintech_austin","recipe":"linkedin_search"}]' --delay 4 --output results.json
+```bash
+./ghost-cli batch --queries '[{"url":"https://example.com","label":"test","recipe":"page_meta"}]' --delay 4 --output results.json
 ```
 
 Or from a file:
-```text
+```bash
 ./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json
 ```
 
-## Multi-Session Pattern
-Use when you need two independent browser sessions simultaneously:
+## Headless Mode
 
-```text
+For sub-agents, CI, or worker delegation:
+
+```bash
+GHOST_HEADLESS=1 ./ghost-cli call ghost_instance_create --arguments '{"instance_id":"worker","headless":true}'
+```
+
+## Multi-Session Pattern
+
+```bash
 ./ghost-cli call ghost_instance_create --arguments '{"instance_id":"session-a","url":"https://example.com"}'
 ./ghost-cli call ghost_instance_create --arguments '{"instance_id":"session-b","url":"https://other.com"}'
 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"session-a"}'
