@@ -1,13 +1,13 @@
 """
-MiaTransport — Ghost CLI adapter for MiaOS's native Electron browser.
+InAppBrowserTransport — Ghost CLI adapter for an in-app browser.
 
-Communicates with MiaOS over a local Unix socket (macOS/Linux) or
+Communicates with In-App Browser over a local Unix socket (macOS/Linux) or
 authenticated loopback TCP (Windows fallback), using a JSON-RPC-style
 request/response protocol. No CDP. No Chrome debugging. No second browser.
 
-MiaOS's Electron app already has a `WebContentsView`-based browser
-(browser.cjs). This transport sends commands that map 1:1 onto MiaOS's
-existing IPC actions — MiaOS just needs to expose them over the socket.
+The host Electron app already has a `WebContentsView`-based browser
+(`browser.cjs`). This transport sends commands that map 1:1 onto the host
+app's existing IPC actions; the host app only needs to expose them over the socket.
 
 Security model:
   - Unix socket with filesystem permissions (only the owning user can connect)
@@ -17,11 +17,11 @@ Security model:
   - Local-only: socket path or 127.0.0.1 loopback
 
 Usage:
-    from mia_transport import MiaTransport, MiaTransportError
+    from in_app_browser_transport import InAppBrowserTransport, InAppBrowserTransportError
 
-    transport = MiaTransport()              # defaults
-    transport = MiaTransport(               # explicit
-        socket_path="/tmp/ghost-mia.sock",
+    transport = InAppBrowserTransport()              # defaults
+    transport = InAppBrowserTransport(               # explicit
+        socket_path="/tmp/ghost-in-app-browser.sock",
         token="secret",
         timeout=30,
     )
@@ -50,12 +50,12 @@ from typing import Any, Optional
 
 DEFAULT_SOCKET_PATH = Path(
     os.environ.get(
-        "GHOST_MIA_SOCKET",
-        os.path.expanduser("~/.miaos/ghost-bridge.sock"),
+        "GHOST_IN_APP_BROWSER_SOCKET",
+        os.path.expanduser("~/.in-app-browser/ghost-bridge.sock"),
     )
 )
 DEFAULT_TCP_HOST = "127.0.0.1"
-DEFAULT_TCP_PORT = int(os.environ.get("GHOST_MIA_PORT", "9400"))
+DEFAULT_TCP_PORT = int(os.environ.get("GHOST_IN_APP_BROWSER_PORT", "9400"))
 DEFAULT_TIMEOUT = 30  # seconds
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MB hard cap on any single response
 MAX_PAGE_TEXT_CHARS = 100_000  # bound on returned page text
@@ -65,37 +65,37 @@ MAX_PAGE_TEXT_CHARS = 100_000  # bound on returned page text
 # ---------------------------------------------------------------------------
 
 
-class MiaTransportError(Exception):
-    """Base error for MiaOS transport failures."""
+class InAppBrowserTransportError(Exception):
+    """Base error for In-App Browser transport failures."""
 
     def __init__(self, code: str, message: str):
         self.code = code
         super().__init__(f"[{code}] {message}")
 
 
-class MiaConnectionError(MiaTransportError):
-    """Cannot reach MiaOS."""
+class InAppBrowserConnectionError(InAppBrowserTransportError):
+    """Cannot reach In-App Browser."""
 
     def __init__(self, message: str):
         super().__init__("CONNECTION_FAILED", message)
 
 
-class MiaTimeoutError(MiaTransportError):
+class InAppBrowserTimeoutError(InAppBrowserTransportError):
     """Request timed out."""
 
     def __init__(self, command: str, timeout: float):
         super().__init__("TIMEOUT", f"'{command}' timed out after {timeout}s")
 
 
-class MiaAuthError(MiaTransportError):
+class InAppBrowserAuthError(InAppBrowserTransportError):
     """Authentication rejected."""
 
     def __init__(self):
-        super().__init__("AUTH_FAILED", "MiaOS rejected the auth token")
+        super().__init__("AUTH_FAILED", "In-App Browser rejected the auth token")
 
 
-class MiaCommandError(MiaTransportError):
-    """MiaOS returned an error for a command."""
+class InAppBrowserCommandError(InAppBrowserTransportError):
+    """In-App Browser returned an error for a command."""
 
     def __init__(self, code: str, message: str):
         super().__init__(code, message)
@@ -136,7 +136,7 @@ def _recv_message(sock: socket.socket, timeout: float) -> dict:
     header = _recv_exact(sock, 4, timeout)
     length = struct.unpack(">I", header)[0]
     if length > MAX_RESPONSE_BYTES:
-        raise MiaTransportError(
+        raise InAppBrowserTransportError(
             "RESPONSE_TOO_LARGE",
             f"Response {length} bytes exceeds {MAX_RESPONSE_BYTES} limit",
         )
@@ -153,8 +153,8 @@ def _new_request_id() -> str:
 # ---------------------------------------------------------------------------
 
 @dataclass
-class MiaTransport:
-    """Client adapter for MiaOS's native Electron browser.
+class InAppBrowserTransport:
+    """Client adapter for the host app's in-app browser.
 
     Connects over a Unix socket (preferred) or authenticated loopback TCP.
     Each call sends a JSON-RPC-style request and waits for the correlated
@@ -173,9 +173,9 @@ class MiaTransport:
             self.socket_path = DEFAULT_SOCKET_PATH
         # Try to read token from env or token file
         if self.token is None:
-            self.token = os.environ.get("GHOST_MIA_TOKEN")
+            self.token = os.environ.get("GHOST_IN_APP_BROWSER_TOKEN")
         if self.token is None:
-            token_file = Path(os.path.expanduser("~/.miaos/ghost-bridge.token"))
+            token_file = Path(os.path.expanduser("~/.in-app-browser/ghost-bridge.token"))
             if token_file.exists():
                 self.token = token_file.read_text().strip()
 
@@ -184,7 +184,7 @@ class MiaTransport:
     # ------------------------------------------------------------------
 
     def _connect(self) -> socket.socket:
-        """Open a connection to MiaOS. Prefer Unix socket, fall back to TCP."""
+        """Open a connection to In-App Browser. Prefer Unix socket, fall back to TCP."""
         # Unix socket
         if self.socket_path and self.socket_path.exists():
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -194,7 +194,7 @@ class MiaTransport:
                 return sock
             except (OSError, ConnectionError) as exc:
                 sock.close()
-                raise MiaConnectionError(
+                raise InAppBrowserConnectionError(
                     f"Unix socket exists but connection failed: {exc}"
                 ) from exc
 
@@ -206,9 +206,9 @@ class MiaTransport:
             return sock
         except (OSError, ConnectionError) as exc:
             sock.close()
-            raise MiaConnectionError(
-                f"Cannot connect to MiaOS at {self.tcp_host}:{self.tcp_port}. "
-                f"Is MiaOS running with the ghost-bridge endpoint enabled? ({exc})"
+            raise InAppBrowserConnectionError(
+                f"Cannot connect to In-App Browser at {self.tcp_host}:{self.tcp_port}. "
+                f"Is In-App Browser running with the ghost-bridge endpoint enabled? ({exc})"
             ) from exc
 
     # ------------------------------------------------------------------
@@ -239,16 +239,16 @@ class MiaTransport:
             sock.sendall(_pack_message(request))
             response = _recv_message(sock, timeout)
         except TimeoutError:
-            raise MiaTimeoutError(command, timeout)
+            raise InAppBrowserTimeoutError(command, timeout)
         except ConnectionError as exc:
-            raise MiaConnectionError(str(exc))
+            raise InAppBrowserConnectionError(str(exc))
         finally:
             sock.close()
 
         # Validate correlation
         resp_id = response.get("id")
         if resp_id != request_id:
-            raise MiaTransportError(
+            raise InAppBrowserTransportError(
                 "ID_MISMATCH",
                 f"Expected response id={request_id}, got id={resp_id}",
             )
@@ -259,8 +259,8 @@ class MiaTransport:
             code = error.get("code", "UNKNOWN") if isinstance(error, dict) else "UNKNOWN"
             message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
             if code in ("AUTH_FAILED", "UNAUTHORIZED", -32001):
-                raise MiaAuthError()
-            raise MiaCommandError(str(code), message)
+                raise InAppBrowserAuthError()
+            raise InAppBrowserCommandError(str(code), message)
 
         return response.get("result", {})
 
@@ -274,9 +274,9 @@ class MiaTransport:
         args: Optional[dict] = None,
         timeout: Optional[float] = None,
     ) -> dict:
-        """Send a command to MiaOS's browser and return the result.
+        """Send a command to the in-app browser and return the result.
 
-        Commands map to MiaOS browser.cjs IPC actions:
+        Commands map to the host app's browser.cjs IPC actions:
             status, navigate, read, vacuum, click, fill, key,
             tab_list, tab_open, tab_switch, tab_close,
             back, forward, reload, stop, screenshot, scroll, wait
@@ -294,14 +294,14 @@ class MiaTransport:
         return result
 
     def status(self) -> dict:
-        """Check MiaOS browser status."""
+        """Check in-app browser status."""
         try:
             result = self._send_request("status", timeout=5)
             self._last_status = result
             return result
-        except MiaTransportError:
+        except InAppBrowserTransportError:
             self._last_status = None
-            return {"connected": False, "error": "MiaOS not reachable"}
+            return {"connected": False, "error": "In-App Browser not reachable"}
 
     def ping(self) -> bool:
         """Quick connectivity check."""
@@ -319,7 +319,7 @@ class MiaTransport:
 
     @property
     def transport_kind(self) -> str:
-        return "mia-transport"
+        return "in-app-browser-transport"
 
     # ------------------------------------------------------------------
     # Convenience methods (mirror ghost-cli tool names)

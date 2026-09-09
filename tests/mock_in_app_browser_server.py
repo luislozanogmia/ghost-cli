@@ -1,11 +1,11 @@
 """
-Mock MiaOS browser server for testing MiaTransport.
+Mock In-App Browser browser server for testing InAppBrowserTransport.
 
-Implements the Ghost ↔ MiaOS protocol over a Unix socket, simulating
-MiaOS's Electron browser with in-memory tab state. No real browser.
+Implements the Ghost ↔ In-App Browser protocol over a Unix socket, simulating
+In-App Browser's Electron browser with in-memory tab state. No real browser.
 
 Usage:
-    server = MockMiaServer(socket_path, token="test-token")
+    server = MockInAppBrowserServer(socket_path, token="test-token")
     server.start()   # runs in a background thread
     ...
     server.stop()
@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-class MockMiaServer:
-    """In-memory mock of MiaOS's browser endpoint."""
+class MockInAppBrowserServer:
+    """In-memory mock of In-App Browser's browser endpoint."""
 
     def __init__(
         self,

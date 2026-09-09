@@ -1,10 +1,10 @@
 """
-Tests for MiaTransport against the mock MiaOS server.
+Tests for InAppBrowserTransport against the mock In-App Browser server.
 
 Run:
-    python -m pytest tests/test_mia_transport.py -v
+    python -m pytest tests/test_in_app_browser_transport.py -v
     # or directly:
-    python tests/test_mia_transport.py
+    python tests/test_in_app_browser_transport.py
 """
 
 from __future__ import annotations
@@ -20,40 +20,40 @@ _ghost_dir = str(Path(__file__).resolve().parent.parent)
 if _ghost_dir not in sys.path:
     sys.path.insert(0, _ghost_dir)
 
-from mia_transport import (
-    MiaAuthError,
-    MiaCommandError,
-    MiaConnectionError,
-    MiaTransport,
-    MiaTransportError,
+from in_app_browser_transport import (
+    InAppBrowserAuthError,
+    InAppBrowserCommandError,
+    InAppBrowserConnectionError,
+    InAppBrowserTransport,
+    InAppBrowserTransportError,
 )
-from tests.mock_mia_server import MockMiaServer
+from tests.mock_in_app_browser_server import MockInAppBrowserServer
 
 
-class TestMiaTransportConnection(unittest.TestCase):
+class TestInAppBrowserTransportConnection(unittest.TestCase):
     """Test connection and auth."""
 
     def test_connection_refused_raises(self):
         """Cannot connect when no server is running."""
-        transport = MiaTransport(
-            socket_path=Path("/tmp/ghost-mia-nonexistent.sock"),
+        transport = InAppBrowserTransport(
+            socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
             tcp_host="127.0.0.1",
             tcp_port=19999,
         )
-        with self.assertRaises(MiaConnectionError):
+        with self.assertRaises(InAppBrowserConnectionError):
             transport.call("status")
 
     def test_ping_returns_false_when_disconnected(self):
-        transport = MiaTransport(
-            socket_path=Path("/tmp/ghost-mia-nonexistent.sock"),
+        transport = InAppBrowserTransport(
+            socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
             tcp_host="127.0.0.1",
             tcp_port=19999,
         )
         self.assertFalse(transport.ping())
 
     def test_status_returns_disconnected_when_no_server(self):
-        transport = MiaTransport(
-            socket_path=Path("/tmp/ghost-mia-nonexistent.sock"),
+        transport = InAppBrowserTransport(
+            socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
             tcp_host="127.0.0.1",
             tcp_port=19999,
         )
@@ -61,19 +61,19 @@ class TestMiaTransportConnection(unittest.TestCase):
         self.assertFalse(status.get("connected", True))
 
 
-class TestMiaTransportWithMock(unittest.TestCase):
-    """Test commands against the mock MiaOS server."""
+class TestInAppBrowserTransportWithMock(unittest.TestCase):
+    """Test commands against the mock In-App Browser server."""
 
     @classmethod
     def setUpClass(cls):
-        cls._tmpdir = tempfile.mkdtemp(prefix="ghost-mia-test-")
+        cls._tmpdir = tempfile.mkdtemp(prefix="ghost-in-app-browser-test-")
         cls._sock_path = Path(cls._tmpdir) / "ghost-bridge.sock"
         cls._token = "test-secret-token-42"
 
-        cls.server = MockMiaServer(cls._sock_path, token=cls._token)
+        cls.server = MockInAppBrowserServer(cls._sock_path, token=cls._token)
         cls.server.start()
 
-        cls.transport = MiaTransport(
+        cls.transport = InAppBrowserTransport(
             socket_path=cls._sock_path,
             token=cls._token,
             timeout=5,
@@ -90,12 +90,12 @@ class TestMiaTransportWithMock(unittest.TestCase):
     # -- Auth --
 
     def test_auth_failure(self):
-        bad_transport = MiaTransport(
+        bad_transport = InAppBrowserTransport(
             socket_path=self._sock_path,
             token="wrong-token",
             timeout=5,
         )
-        with self.assertRaises(MiaAuthError):
+        with self.assertRaises(InAppBrowserAuthError):
             bad_transport.call("status")
 
     def test_auth_success(self):
@@ -117,7 +117,7 @@ class TestMiaTransportWithMock(unittest.TestCase):
         self.assertTrue(self.transport.connected)
 
     def test_transport_kind(self):
-        self.assertEqual(self.transport.transport_kind, "mia-transport")
+        self.assertEqual(self.transport.transport_kind, "in-app-browser-transport")
 
     # -- Navigation --
 
@@ -246,7 +246,7 @@ class TestMiaTransportWithMock(unittest.TestCase):
     # -- Error handling --
 
     def test_unknown_command(self):
-        with self.assertRaises(MiaCommandError) as ctx:
+        with self.assertRaises(InAppBrowserCommandError) as ctx:
             self.transport.call("nonexistent_command")
         self.assertIn("UNKNOWN_METHOD", str(ctx.exception))
 
@@ -273,18 +273,18 @@ class TestMiaTransportWithMock(unittest.TestCase):
         self.assertEqual(req.get("token"), self._token)
 
 
-class TestMiaTransportBounds(unittest.TestCase):
+class TestInAppBrowserTransportBounds(unittest.TestCase):
     """Test response bounding and safety."""
 
     @classmethod
     def setUpClass(cls):
-        cls._tmpdir = tempfile.mkdtemp(prefix="ghost-mia-bounds-")
+        cls._tmpdir = tempfile.mkdtemp(prefix="ghost-in-app-browser-bounds-")
         cls._sock_path = Path(cls._tmpdir) / "ghost-bridge.sock"
 
-        cls.server = MockMiaServer(cls._sock_path, token=None)
+        cls.server = MockInAppBrowserServer(cls._sock_path, token=None)
         cls.server.start()
 
-        cls.transport = MiaTransport(
+        cls.transport = InAppBrowserTransport(
             socket_path=cls._sock_path,
             token=None,
             timeout=5,

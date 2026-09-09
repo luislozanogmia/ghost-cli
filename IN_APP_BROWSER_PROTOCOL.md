@@ -1,25 +1,25 @@
-# Ghost ↔ MiaOS Browser Protocol
+# Ghost ↔ In-App Browser Protocol
 
 ## Overview
 
-A local JSON-RPC-style protocol between Ghost CLI and MiaOS's Electron
+A local JSON-RPC-style protocol between Ghost CLI and In-App Browser's Electron
 `WebContentsView` browser. No CDP. No Chrome debugging APIs. No second browser.
 
-Ghost CLI sends commands. MiaOS executes them against its existing
+Ghost CLI sends commands. In-App Browser executes them against its existing
 `browser.cjs` `WebContentsView` tabs and returns results.
 
 ## Transport
 
 **Primary: Unix domain socket** (macOS/Linux)
 
-- Path: `~/.miaos/ghost-bridge.sock`
-- Override: `GHOST_MIA_SOCKET` env var
+- Path: `~/.in-app-browser/ghost-bridge.sock`
+- Override: `GHOST_IN_APP_BROWSER_SOCKET` env var
 - Security: filesystem permissions restrict access to the owning user
 
 **Fallback: Authenticated loopback TCP** (Windows or explicit config)
 
 - Address: `127.0.0.1:9400`
-- Override: `GHOST_MIA_PORT` env var
+- Override: `GHOST_IN_APP_BROWSER_PORT` env var
 - Security: loopback-only + auth token
 
 ### Why Unix socket over HTTP/WebSocket
@@ -33,7 +33,7 @@ Ghost CLI sends commands. MiaOS executes them against its existing
 | Persistent connection needed | No | No | Yes |
 
 The protocol is transport-neutral — the same JSON messages work over either
-channel. MiaOS can implement whichever fits its runtime.
+channel. In-App Browser can implement whichever fits its runtime.
 
 ## Wire Format
 
@@ -47,8 +47,8 @@ newlines.
 
 ## Authentication
 
-Every request includes a `token` field. MiaOS validates it against a shared
-secret stored at `~/.miaos/ghost-bridge.token`. Ghost CLI reads the same
+Every request includes a `token` field. In-App Browser validates it against a shared
+secret stored at `~/.in-app-browser/ghost-bridge.token`. Ghost CLI reads the same
 file at startup.
 
 ```json
@@ -61,7 +61,7 @@ file at startup.
 }
 ```
 
-If the token is missing or wrong, MiaOS returns:
+If the token is missing or wrong, In-App Browser returns:
 
 ```json
 {
@@ -171,7 +171,7 @@ Navigate the active tab (or a specific tab) to a URL.
 }
 ```
 
-**MiaOS mapping:** `{action: "navigate", value: url}`
+**In-App Browser mapping:** `{action: "navigate", value: url}`
 
 ---
 
@@ -199,7 +199,7 @@ Both optional. `max_chars` capped at 100,000.
 }
 ```
 
-**MiaOS mapping:** `executeJavaScript` on the active tab's `webContents`
+**In-App Browser mapping:** `executeJavaScript` on the active tab's `webContents`
 
 ---
 
@@ -229,7 +229,7 @@ inputs) for click-based navigation.
 }
 ```
 
-**MiaOS mapping:** `navigate` + `executeJavaScript` to enumerate elements
+**In-App Browser mapping:** `navigate` + `executeJavaScript` to enumerate elements
 
 ---
 
@@ -257,7 +257,7 @@ Provide `choice` OR `selector`. `wait` is optional.
 }
 ```
 
-**MiaOS mapping:** `executeJavaScript` to find element and dispatch click
+**In-App Browser mapping:** `executeJavaScript` to find element and dispatch click
 
 ---
 
@@ -329,7 +329,7 @@ List all open browser tabs.
 }
 ```
 
-**MiaOS mapping:** `{action: "state"}` → map tab entries
+**In-App Browser mapping:** `{action: "state"}` → map tab entries
 
 ---
 
@@ -353,7 +353,7 @@ Open a new tab.
 }
 ```
 
-**MiaOS mapping:** `{action: "new"}` + `{action: "navigate", value: url}`
+**In-App Browser mapping:** `{action: "new"}` + `{action: "navigate", value: url}`
 
 ---
 
@@ -377,7 +377,7 @@ Switch to a tab by ID.
 }
 ```
 
-**MiaOS mapping:** `{action: "select", id: tab_id}`
+**In-App Browser mapping:** `{action: "select", id: tab_id}`
 
 ---
 
@@ -399,7 +399,7 @@ Close a tab by ID.
 }
 ```
 
-**MiaOS mapping:** `{action: "close", id: tab_id}`
+**In-App Browser mapping:** `{action: "close", id: tab_id}`
 
 ---
 
@@ -407,7 +407,7 @@ Close a tab by ID.
 
 Navigate back in the active tab's history.
 
-**MiaOS mapping:** `{action: "back"}`
+**In-App Browser mapping:** `{action: "back"}`
 
 ---
 
@@ -415,7 +415,7 @@ Navigate back in the active tab's history.
 
 Navigate forward in the active tab's history.
 
-**MiaOS mapping:** `{action: "forward"}`
+**In-App Browser mapping:** `{action: "forward"}`
 
 ---
 
@@ -423,7 +423,7 @@ Navigate forward in the active tab's history.
 
 Reload the active tab.
 
-**MiaOS mapping:** `{action: "reload"}`
+**In-App Browser mapping:** `{action: "reload"}`
 
 ---
 
@@ -431,7 +431,7 @@ Reload the active tab.
 
 Stop loading the active tab.
 
-**MiaOS mapping:** `{action: "stop"}`
+**In-App Browser mapping:** `{action: "stop"}`
 
 ---
 
@@ -503,12 +503,12 @@ OR:
 | Request timeout default | 30 s |
 | Request timeout max | 120 s |
 
-## MiaOS Implementation Checklist
+## In-App Browser Implementation Checklist
 
-MiaOS needs to add a server endpoint that:
+In-App Browser needs to add a server endpoint that:
 
-1. Listens on `~/.miaos/ghost-bridge.sock` (Unix socket)
-2. Reads the shared token from `~/.miaos/ghost-bridge.token`
+1. Listens on `~/.in-app-browser/ghost-bridge.sock` (Unix socket)
+2. Reads the shared token from `~/.in-app-browser/ghost-bridge.token`
 3. Parses length-prefixed JSON requests
 4. Validates `token` and `id` fields
 5. Routes `method` to the existing `browser.cjs` IPC actions
@@ -516,14 +516,14 @@ MiaOS needs to add a server endpoint that:
 7. Adds `read` and `vacuum` commands via `executeJavaScript` on `webContents`
 8. Adds `screenshot` via `webContents.capturePage()`
 
-The protocol is deliberately aligned with MiaOS's existing `browser.cjs`
-IPC channel (`miaos-browser-command`) so the server is a thin translation
+The protocol is deliberately aligned with In-App Browser's existing `browser.cjs`
+IPC channel (`in-app-browser-command`) so the server is a thin translation
 layer, not a new browser engine.
 
 ## Status
 
-- ✅ Ghost CLI `MiaTransport` client: implemented
+- ✅ Ghost CLI `InAppBrowserTransport` client: implemented
 - ✅ Protocol specification: this document
-- ✅ Mock server + tests: `tests/test_mia_transport.py`
-- ⬜ MiaOS server endpoint: not yet implemented
-- ⬜ Ghost CLI runtime registration: ready when MiaOS endpoint exists
+- ✅ Mock server + tests: `tests/test_in_app_browser_transport.py`
+- ⬜ In-App Browser server endpoint: not yet implemented
+- ⬜ Ghost CLI runtime registration: ready when In-App Browser endpoint exists
