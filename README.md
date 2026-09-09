@@ -1,118 +1,117 @@
 # ghost-cli
 
-Ghost Browser - AI browser automation via numbered accessibility menus.
+Ghost Browser — AI browser automation via a Chrome extension and numbered accessibility menus.
 
 <img width="607" height="453" alt="Screenshot at Jun 15 22-08-42" src="https://github.com/user-attachments/assets/f9481c3d-74a7-4049-ae13-20f83b72d59f" />
 
-
 ## Install
 
+1. Install Python dependencies:
 ```bash
 pip install -r requirements.txt
-playwright install chromium
+pip install websockets aiohttp
 ```
 
-## Browser Modes
+2. Load the Chrome extension:
+   - Open `chrome://extensions/`
+   - Enable **Developer Mode** (top right)
+   - Click **Load unpacked** → select the `extension/` folder
+   - Click the **Ghost Bridge** icon in the toolbar → **Connect**
 
-Ghost supports three browser attachment modes:
-
-| Mode | Flag | Behavior |
-|------|------|----------|
-| **Live Chrome** | `./ghost-cli live-status` | Checks and reuses the user's existing shared Chrome MCP connection |
-| **Playwright headed** | `"headless": false` | Launches own isolated Chromium with a visible window |
-| **Playwright headless** | `"headless": true` | Launches own isolated Chromium with no window (for CI/agents) |
-
-When `headless` is not set (default `false`), Ghost auto-detects and attaches to your
-running Chrome. Set `headless: true` to guarantee an isolated Playwright browser that
-never touches your Chrome session -- ideal for delegating work to sub-agents.
-
+3. Start the bridge server:
 ```bash
-# Check first; do not reconnect when connection is already live
-./ghost-cli live-status
-
-# Run only when live-status reports disconnected
-./ghost-cli live-connect
-
-# Launch isolated headless Chromium (agents/CI)
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"worker","headless":true}'
-
-# Launch isolated headed Chromium (visible but separate from your Chrome)
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"demo","headless":false}' --headless=false
+python extension/bridge_server.py &
 ```
 
-You can also set the `GHOST_HEADLESS=1` environment variable to default all
-`ghost_instance_create` calls to headless mode.
+4. Verify:
+```bash
+curl -s http://127.0.0.1:9378/status
+# → {"connected": true, ...}
+```
 
-### Shared live connection
+## How It Works
 
-AI agents must run the read-only `./ghost-cli live-status` check first. When it returns `connection: "live"`, `should_reconnect: false`, and `CONNECTION IS LIVE`, reuse instance `live` and proceed directly to `./ghost-cli call` commands. Run `./ghost-cli live-connect` only when the status is disconnected. The connection uses one shared `chrome-devtools-mcp` broker and refuses to fall back to Playwright.
+The Chrome extension uses native Chrome APIs (`chrome.tabs`, `chrome.scripting`) to control the browser. A local bridge server (`localhost:9378`) relays commands from agents to the extension over WebSocket.
+
+```
+Agent (curl / code)
+  ↓ HTTP POST to localhost:9378
+Bridge Server (extension/bridge_server.py)
+  ↓ WebSocket
+Chrome Extension (extension/)
+  ↓ chrome.tabs / chrome.scripting
+Browser tabs / pages
+```
+
+No remote debugging. No debugging dialogs. The user approves the extension once during install.
 
 ## Quick Start
 
 ```bash
-# Reuse the already-approved shared Chrome connection
-./ghost-cli live-status
+# Check connection
+curl -s http://127.0.0.1:9378/status
 
-# List available tools
-./ghost-cli list-tools
+# Navigate somewhere
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_navigate","args":{"url":"https://news.ycombinator.com"}}'
 
-# One-shot commands (persistent daemon auto-starts)
-./ghost-cli call ghost_vacuum --arguments '{"url":"https://news.ycombinator.com","limit":30}'
-./ghost-cli call ghost_click --arguments '{"choice":5,"wait":"networkidle"}'
-./ghost-cli call ghost_read --arguments '{"url":"https://example.com","max_chars":4000}'
+# Get numbered interactive elements
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_vacuum","args":{"url":"https://news.ycombinator.com","limit":30}}'
 
-# Interactive REPL
-./ghost-cli repl
+# Click element #5
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_click","args":{"choice":5}}'
+
+# Read page text
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_read","args":{"max_chars":4000}}'
 ```
 
-`ghost-cli call` is **persistent by default** -- it auto-starts a local daemon and
-reuses the same runtime across separate shell calls. The same `instance_id` keeps
-its browser attach, vacuum state, and tab context. Use `--ephemeral` only for
-throwaway one-shot commands.
+## Commands
 
-## Tools
+All commands are sent as HTTP POST to `http://127.0.0.1:9378/call` with `Content-Type: application/json`.
 
-### Core Navigation
+### Navigation
 
-| Tool | Purpose |
-|------|---------|
+| Command | Purpose |
+|---------|---------|
+| `ghost_navigate` | Navigate the active tab to a URL |
 | `ghost_vacuum` | Navigate + extract numbered interactive element menu |
-| `ghost_click` | Execute action by menu number, auto re-vacuums |
-| `ghost_more` | Paginate through cached vacuum results |
-| `ghost_scroll` | Scroll page (lazy-load content) and re-vacuum |
+| `ghost_click` | Click element by menu number |
+| `ghost_scroll` | Scroll page (up/down/top/bottom) |
 
-### Content Reading
+### Reading
 
-| Tool | Purpose |
-|------|---------|
-| `ghost_read` | Extract clean readable text (like reader mode) |
-| `ghost_eval` | Run arbitrary JavaScript on the page |
-| `ghost_extract` | Structured extraction with built-in recipes |
+| Command | Purpose |
+|---------|---------|
+| `ghost_read` | Extract clean readable text (optional CSS `selector`) |
+| `ghost_eval` | Run JavaScript on the page (CSP-permitting) |
+| `ghost_screenshot` | Capture the visible page |
 
-### Tab Management
+### Tabs
 
-| Tool | Purpose |
-|------|---------|
-| `ghost_tab_list` | List all open tabs with index and URL |
-| `ghost_tab_open` | Open a new tab (optionally with URL) |
-| `ghost_tab_switch` | Switch active tab by index, auto-vacuums |
-| `ghost_tab_close` | Close a tab by index |
+| Command | Purpose |
+|---------|---------|
+| `ghost_tab_list` | List all open tabs |
+| `ghost_tab_open` | Open a new tab |
+| `ghost_tab_switch` | Switch active tab by index |
 
-### Screenshots
+### Keyboard
 
-| Tool | Purpose |
-|------|---------|
-| `ghost_screenshot` | Capture viewport or full page. Set `inline: true` for base64 data |
+| Command | Purpose |
+|---------|---------|
+| `ghost_key` | Send a key press (`"key":"Enter"`) or type text (`"text":"query"`) |
 
-### Instance Management
+### Auth
 
-| Tool | Purpose |
-|------|---------|
-| `ghost_instance_create` | Create/reuse named browser instance |
-| `ghost_instance_list` | List all active instances |
-| `ghost_instance_close` | Close and unregister an instance |
-| `ghost_status` | Show connection/cache state for one instance |
-| `ghost_save_auth` | Export browser cookies to persist sessions |
+| Command | Purpose |
+|---------|---------|
+| `ghost_save_auth` | Save browser cookies after manual login |
 
 ## Wait Strategies
 
@@ -124,67 +123,56 @@ throwaway one-shot commands.
 | `networkidle` | Wait until network is idle 500ms | SPAs, AJAX-heavy pages |
 | `none` | No wait, immediate re-vacuum | Already-loaded content |
 
-## Structured Error Codes
+## Error Codes
 
-All errors return a machine-readable format: `Error [CODE]: message`
+All errors return: `Error [CODE]: message`
 
 | Code | Meaning |
 |------|---------|
-| `ELEMENT_NOT_FOUND` | Menu number doesn't exist in cached vacuum |
-| `NAVIGATION_TIMEOUT` | Page load or click timed out |
-| `NO_BROWSER` | No browser connected yet |
+| `ELEMENT_NOT_FOUND` | Menu number doesn't exist |
+| `NAVIGATION_TIMEOUT` | Page load timed out |
+| `NO_BROWSER` | Extension not connected |
 | `NO_VACUUM` | Must vacuum before clicking |
 | `INVALID_INPUT` | Missing or malformed argument |
-| `BROWSER_DISCONNECTED` | Browser crashed or was closed externally |
+| `BROWSER_DISCONNECTED` | Browser was closed |
 | `TAB_NOT_FOUND` | Tab index out of range |
 | `CLICK_FAILED` | Element could not be activated |
-| `FILL_REQUIRED` | Textbox/searchbox needs a `value` argument |
-| `INSTANCE_NOT_FOUND` | Named instance doesn't exist |
+| `FILL_REQUIRED` | Input field needs a `value` argument |
 
 ## AI Agent Tips
 
-These behaviors trip up fresh agents. Know them before your first session:
-
-- **Always re-vacuum after navigation.** Element numbers are only valid for the current page state. If you click a link or the page reloads, your old numbers are stale -- `ghost_vacuum` again before clicking.
-- **Use `limit` to reduce noise.** Dense pages (LinkedIn, dashboards) return 80+ elements. Set `"limit": 20` or `"limit": 30` to get the most relevant items without drowning in nav/footer/ad elements.
-- **Sleep between profile visits.** Ghost has no built-in rate limiter. If you're visiting 10+ pages in sequence on LinkedIn or similar sites, add 3-5 second pauses between calls to avoid triggering anti-bot detection.
-- **`ghost_read` for content, `ghost_vacuum` for interaction.** If you just need to check whether a word appears on the page, use `ghost_read` -- it returns clean text without the numbered element overhead.
-- **One instance per workflow.** Don't create a new instance for every call. Keep the same `instance_id` throughout -- it preserves browser state, cookies, and vacuum cache.
-- **Save auth immediately after manual login.** The human logs in once, you call `ghost_save_auth`, and that session persists across daemon restarts.
-- **Headless for delegation.** When spawning sub-agents that need browser access, use `"headless": true` so they get their own isolated Chromium without touching the user's Chrome.
+- **Always re-vacuum after navigation.** Element numbers are only valid for the current page state.
+- **Use `limit` to reduce noise.** Dense pages return 80+ elements. Set `"limit": 20` or `"limit": 30`.
+- **`ghost_read` for content, `ghost_vacuum` for interaction.** If you just need text, use `ghost_read`.
+- **Save auth after manual login.** Call `ghost_save_auth` right after the user logs in.
+- **`ghost_eval` won't work on sites with strict CSP** (YouTube, Google). Use `ghost_read` with a `selector` instead.
 
 ## Extraction Recipes
 
 Built-in recipes for `ghost_extract`:
 
-- `linkedin_search` -- numbered profile list from LinkedIn search results
-- `linkedin_profile` -- formatted profile card
-- `page_links` -- numbered link list from any page
-- `page_meta` -- title, description, OG tags
+- `linkedin_search` — profile list from LinkedIn search results
+- `linkedin_profile` — formatted profile card
+- `page_links` — link list from any page
+- `page_meta` — title, description, OG tags
 
-## Daemon Management
+## LinkedIn
 
-```bash
-./ghost-cli daemon-status   # Check if persistent daemon is running
-./ghost-cli daemon-stop     # Shut down the daemon cleanly
-```
-
-## Advanced Usage
-
-Open LinkedIn with the stable launcher and shared auth state:
+LinkedIn has a dedicated persistent profile and launcher:
 
 ```bash
 ./browser_context/linkedin/open_linkedin_ghost.sh open
-GHOST_HEADLESS=1 ./ghost-cli call ghost_vacuum --arguments '{"instance_id":"linkedin","url":"https://www.linkedin.com/feed/"}'
+./browser_context/linkedin/open_linkedin_ghost.sh vacuum
 ```
 
-Attach to an external CDP endpoint (e.g. Liquid workspace browser):
-
+Manual re-login:
 ```bash
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"ext","cdp_url":"http://localhost:9222"}'
+./browser_context/linkedin/open_linkedin_ghost.sh login
+# User logs in manually
+./browser_context/linkedin/open_linkedin_ghost.sh save
 ```
 
-Batch extraction across multiple URLs:
+## Batch Extraction
 
 ```bash
 ./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json
@@ -194,31 +182,11 @@ Batch extraction across multiple URLs:
 
 | # | Issue | Status |
 |---|-------|--------|
-| 1 | Vacuum output lacks semantic filtering (no "only show profile cards" mode) | Planned |
-| 2 | No built-in rate limiting or anti-detection pacing between requests | Planned |
-| 3 | Error messages don't suggest recovery actions (e.g. "re-vacuum first") | Planned |
-| 4 | No text search primitive (`ghost_find_text` or `ghost_grep` for page content) | Planned |
-| 5 | Screenshots return path only -- no text description for non-multimodal agents | Planned |
-| 6 | No scroll-to-element by text/selector (only blind `ghost_more`) | Planned |
-| 7 | Stale instances don't auto-expire -- manual cleanup required | Planned |
+| 1 | Vacuum output lacks semantic filtering | Planned |
+| 2 | No built-in rate limiting between requests | Planned |
+| 3 | Error messages don't suggest recovery actions | Planned |
+| 4 | No text search primitive | Planned |
+| 5 | Screenshots return path only | Planned |
+| 6 | No scroll-to-element by text/selector | Planned |
 
 Contributions welcome. Open an issue to discuss before sending PRs.
-
-## Architecture
-
-```
-ghost-cli (CLI entrypoint)
-  -> ghost_daemon.py (persistent background process)
-    -> runtime_host.py (tool dispatch + GhostInstance lifecycle)
-      -> helpers/vacuum.py (accessibility tree -> numbered menu)
-      -> helpers/execute.py (menu number -> Playwright action)
-      -> helpers/extractors.py (built-in extraction recipes)
-      -> chrome_transport.py (chrome-devtools transport)
-      -> playwright_session_transport.py (managed Playwright sessions)
-```
-
-## Status
-
-The supported path is this CLI runtime only.
-
-See [FUNCTIONALITY.md](./FUNCTIONALITY.md) for the full CLI command reference.

@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Ghost Browser Extension</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f0f1a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+  .container {
+    max-width: 640px;
+    width: 100%;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+  .logo {
+    width: 64px;
+    height: 64px;
+    background: #6366f1;
+    border-radius: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 800;
+    font-size: 32px;
+    margin-bottom: 16px;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  .header p {
+    font-size: 16px;
+    color: #94a3b8;
+  }
+  .step {
+    background: #1e1e2e;
+    border: 1px solid #2d2d3f;
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 20px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+  .step:hover {
+    border-color: #6366f1;
+  }
+  .step.done {
+    border-color: #22c55e;
+    opacity: 0.6;
+  }
+  .step.done .step-check {
+    background: #22c55e;
+  }
+  .step-number {
+    position: absolute;
+    top: -12px;
+    left: 24px;
+    background: #6366f1;
+    color: white;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .step-check {
+    position: absolute;
+    top: -12px;
+    right: 24px;
+    background: #2d2d3f;
+    color: white;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .step h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 12px;
+  }
+  .step p {
+    font-size: 14px;
+    color: #94a3b8;
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+  .visual-guide {
+    background: #0f0f1a;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 16px 0;
+    text-align: center;
+  }
+  .toggle-mock {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    background: #f3f4f6;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 14px;
+    color: #1a1a2e;
+  }
+  .toggle-switch {
+    width: 44px;
+    height: 24px;
+    background: #d1d5db;
+    border-radius: 12px;
+    position: relative;
+    cursor: pointer;
+  }
+  .toggle-switch.on {
+    background: #6366f1;
+  }
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    background: white;
+    border-radius: 50%;
+    top: 3px;
+    left: 3px;
+    transition: transform 0.2s;
+  }
+  .toggle-switch.on::after {
+    transform: translateX(20px);
+  }
+  .arrow {
+    font-size: 32px;
+    color: #f59e0b;
+    animation: bounce 1s infinite;
+    display: inline-block;
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  .arrow-right {
+    animation: bounceRight 1s infinite;
+  }
+  @keyframes bounceRight {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(6px); }
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+  .btn-primary {
+    background: #6366f1;
+    color: white;
+  }
+  .btn-primary:hover {
+    background: #4f46e5;
+    transform: translateY(-1px);
+  }
+  .btn-outline {
+    background: transparent;
+    color: #6366f1;
+    border: 1px solid #6366f1;
+  }
+  .btn-outline:hover {
+    background: #6366f120;
+  }
+  .path-box {
+    background: #0f0f1a;
+    border: 1px solid #2d2d3f;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    color: #a5b4fc;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0;
+    word-break: break-all;
+  }
+  .path-box .copy-btn {
+    flex-shrink: 0;
+    background: #2d2d3f;
+    border: none;
+    color: #94a3b8;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .path-box .copy-btn:hover {
+    background: #3d3d4f;
+    color: white;
+  }
+  .mock-btn {
+    display: inline-block;
+    background: #f3f4f6;
+    color: #1a1a2e;
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid #d1d5db;
+  }
+  .status-bar {
+    background: #1e1e2e;
+    border: 1px solid #2d2d3f;
+    border-radius: 16px;
+    padding: 24px 28px;
+    margin-top: 32px;
+    text-align: center;
+  }
+  .status-bar h3 {
+    font-size: 16px;
+    margin-bottom: 8px;
+  }
+  .status-bar .checking {
+    color: #f59e0b;
+  }
+  .status-bar .connected {
+    color: #22c55e;
+  }
+  .status-bar .disconnected {
+    color: #ef4444;
+  }
+  .hint {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 8px;
+  }
+  kbd {
+    background: #2d2d3f;
+    border: 1px solid #3d3d4f;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    font-family: 'SF Mono', monospace;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">G</div>
+      <h1>Ghost Browser Extension</h1>
+      <p>Three steps to browser automation without debugging dialogs</p>
+    </div>
+
+    <div class="step" id="step1">
+      <div class="step-number">1</div>
+      <div class="step-check" onclick="toggleStep(1)">○</div>
+      <h2>Open Chrome Extensions</h2>
+      <p>Click the button below to open the extensions page, then flip the <strong>Developer mode</strong> toggle in the top-right corner.</p>
+      <div class="visual-guide">
+        <span class="arrow arrow-right">👉</span>
+        <div class="toggle-mock">
+          Developer mode
+          <div class="toggle-switch on"></div>
+        </div>
+        <span class="arrow arrow-right" style="transform: scaleX(-1);">👉</span>
+      </div>
+      <a href="chrome://extensions/" class="btn btn-primary" id="openExtBtn">Open chrome://extensions/</a>
+      <p class="hint">If the button doesn't work, paste <kbd>chrome://extensions/</kbd> in your address bar</p>
+    </div>
+
+    <div class="step" id="step2">
+      <div class="step-number">2</div>
+      <div class="step-check" onclick="toggleStep(2)">○</div>
+      <h2>Load the Extension</h2>
+      <p>Click <strong>"Load unpacked"</strong> in the top-left of the extensions page:</p>
+      <div class="visual-guide">
+        <span class="arrow">👇</span><br>
+        <span class="mock-btn">Load unpacked</span>
+      </div>
+      <p>Then select this folder:</p>
+      <div class="path-box">
+        <span id="extPath">extension/</span>
+        <button class="copy-btn" onclick="copyPath()">Copy</button>
+      </div>
+      <p class="hint">The path is also copied to your clipboard by the install script</p>
+    </div>
+
+    <div class="step" id="step3">
+      <div class="step-number">3</div>
+      <div class="step-check" onclick="toggleStep(3)">○</div>
+      <h2>Connect</h2>
+      <p>Click the <strong>Ghost Bridge</strong> icon in your Chrome toolbar, then click <strong>Connect</strong>.</p>
+      <div class="visual-guide">
+        <div style="display:inline-flex;align-items:center;gap:8px;">
+          <span class="arrow arrow-right">👉</span>
+          <div style="background:#6366f1;color:white;width:32px;height:32px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;">G</div>
+          <span style="color:#94a3b8;">→</span>
+          <span class="mock-btn" style="background:#6366f1;color:white;border-color:#6366f1;">Connect</span>
+        </div>
+      </div>
+      <p class="hint">If you don't see the icon, click the puzzle piece 🧩 in the toolbar and pin Ghost Bridge</p>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+      <h3 id="statusTitle" class="checking">⏳ Waiting for setup...</h3>
+      <p id="statusDetail">Complete the steps above, then the bridge will connect automatically</p>
+    </div>
+  </div>
+
+  <script>
+    // Set the extension path from URL params (install script passes it)
+    const params = new URLSearchParams(window.location.search);
+    const extPath = params.get('path');
+    if (extPath) {
+      document.getElementById('extPath').textContent = extPath;
+    }
+
+    function copyPath() {
+      const path = document.getElementById('extPath').textContent;
+      navigator.clipboard.writeText(path).then(() => {
+        const btn = document.querySelector('.copy-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+      });
+    }
+
+    function toggleStep(n) {
+      const step = document.getElementById('step' + n);
+      const check = step.querySelector('.step-check');
+      if (step.classList.contains('done')) {
+        step.classList.remove('done');
+        check.textContent = '○';
+      } else {
+        step.classList.add('done');
+        check.textContent = '✓';
+      }
+    }
+
+    // Poll bridge status
+    async function checkStatus() {
+      try {
+        const res = await fetch('http://127.0.0.1:9378/status');
+        const data = await res.json();
+        const title = document.getElementById('statusTitle');
+        const detail = document.getElementById('statusDetail');
+        if (data.connected) {
+          title.className = 'connected';
+          title.textContent = '✅ Ghost Bridge is live!';
+          detail.textContent = 'Extension connected. You can close this tab.';
+          // Auto-mark all steps done
+          for (let i = 1; i <= 3; i++) {
+            document.getElementById('step' + i).classList.add('done');
+            document.getElementById('step' + i).querySelector('.step-check').textContent = '✓';
+          }
+          return; // Stop polling
+        } else {
+          title.className = 'checking';
+          title.textContent = '⏳ Bridge server running, waiting for extension...';
+          detail.textContent = 'Complete steps 2 and 3 above';
+        }
+      } catch {
+        const title = document.getElementById('statusTitle');
+        const detail = document.getElementById('statusDetail');
+        title.className = 'disconnected';
+        title.textContent = '⚠ Bridge server not running';
+        detail.textContent = 'Run: python extension/bridge_server.py &';
+      }
+      setTimeout(checkStatus, 2000);
+    }
+
+    checkStatus();
+  </script>
+</body>
+</html>

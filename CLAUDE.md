@@ -1,86 +1,97 @@
-# Ghost CLI -- Skill Guide
+# Ghost CLI
 
-## Golden Rule: Use the Daemon
+## Setup
 
-**Never run bare `python -c` or `python << 'EOF'` to call Ghost tools against the user's Chrome.**
+Install the Chrome extension:
 
-Each bare Python process creates a new CDP connection, which triggers Chrome's "Allow remote debugging?" dialog. The user has to click Allow every single time.
+1. Open `chrome://extensions/`
+2. Enable Developer Mode
+3. Click "Load unpacked" → select the `extension/` folder
+4. Click the Ghost Bridge icon in the toolbar → "Connect"
 
-Instead, always use:
+Start the bridge server:
 ```bash
-./ghost-cli call <tool_name> --arguments '{"key": "value"}'
+pip install websockets aiohttp
+python extension/bridge_server.py &
 ```
 
-The daemon (`ghost_daemon.py`) holds one persistent CDP connection. The user approves once, and all subsequent calls reuse it.
+## Using the Browser
 
-Bare Python is only acceptable for **headless mode** (`"headless": true`) where no user Chrome is involved.
+All browser commands go through the extension bridge at `localhost:9378`.
 
-## Connecting to the User's Chrome
-
+### Check connection
 ```bash
-# Read-only check. If it says connection=live, do not reconnect.
-./ghost-cli live-status
-
-# Run only if live-status says connection=disconnected.
-./ghost-cli live-connect
-
-# All subsequent calls reuse the same connection -- no more prompts
-./ghost-cli call ghost_tab_list --arguments '{"instance_id":"live"}'
-./ghost-cli call ghost_vacuum --arguments '{"instance_id":"live","url":"https://example.com"}'
-./ghost-cli call ghost_click --arguments '{"instance_id":"live","choice":5}'
+curl -s http://127.0.0.1:9378/status
 ```
 
-`live-status` reports `CONNECTION IS LIVE` and `should_reconnect:false` when the existing approval should be reused. In that state, proceed directly to `./ghost-cli call` commands. A connection must report `backend=chrome-devtools-mcp`, `transport=chrome-transport`, `browser_connected=true`, and `playwright_used=false`. Do not manually pass a Chrome websocket URL or start another Chrome MCP process.
-
-## Headless Mode (for Agents/CI)
-
+### Commands
 ```bash
-# Isolated Chromium -- never touches user's Chrome, no approval needed
-./ghost-cli call ghost_instance_create --arguments '{"instance_id":"worker","headless":true}'
+# List tabs
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_tab_list"}'
+
+# Navigate
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_navigate","args":{"url":"https://example.com"}}'
+
+# Read page content
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_read","args":{"max_chars":4000}}'
+
+# Read with CSS selector
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_read","args":{"selector":"article","max_chars":4000}}'
+
+# Vacuum (numbered interactive elements)
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_vacuum","args":{"url":"https://example.com","limit":30}}'
+
+# Click by choice number
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_click","args":{"choice":5}}'
+
+# Screenshot
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_screenshot"}'
+
+# Scroll
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_scroll","args":{"direction":"down","amount":500}}'
+
+# Keyboard input
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_key","args":{"key":"Enter"}}'
+
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_key","args":{"text":"search query"}}'
+
+# Tab management
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_tab_open","args":{"url":"https://example.com"}}'
+
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_tab_switch","args":{"tab_index":3}}'
 ```
 
-Use headless when delegating to sub-agents or running automated workflows.
+## Workflow
 
-## Common Workflows
-
-### Vacuum-Click Loop
-```bash
-./ghost-cli call ghost_vacuum --arguments '{"instance_id":"live","url":"https://example.com","limit":30}'
-./ghost-cli call ghost_click --arguments '{"instance_id":"live","choice":5,"wait":"networkidle"}'
-```
-
-### Read Page Content
-```bash
-./ghost-cli call ghost_read --arguments '{"instance_id":"live","max_chars":4000}'
-./ghost-cli call ghost_read --arguments '{"instance_id":"live","url":"https://example.com","selector":"article"}'
-```
-
-### SPA Extraction (WhatsApp, LinkedIn, Gmail)
-```bash
-./ghost-cli call ghost_eval --arguments '{"instance_id":"live","script":"() => document.title"}'
-./ghost-cli call ghost_extract --arguments '{"instance_id":"live","recipe":"page_links"}'
-```
-
-### Multi-Tab
-```bash
-./ghost-cli call ghost_tab_list --arguments '{"instance_id":"live"}'
-./ghost-cli call ghost_tab_switch --arguments '{"instance_id":"live","tab_index":3}'
-./ghost-cli call ghost_tab_open --arguments '{"instance_id":"live","url":"https://example.com"}'
-```
-
-### Keyboard Input
-```bash
-./ghost-cli call ghost_key --arguments '{"instance_id":"live","key":"Escape"}'
-./ghost-cli call ghost_key --arguments '{"instance_id":"live","text":"search query"}'
-```
+1. Check connection: `curl -s http://127.0.0.1:9378/status`
+2. Vacuum the page to get numbered elements
+3. Click, read, or interact
+4. Re-vacuum after any navigation (element numbers reset)
 
 ## Error Codes
 
-All errors: `Error [CODE]: message`. Codes: `ELEMENT_NOT_FOUND`, `NAVIGATION_TIMEOUT`, `NO_BROWSER`, `NO_VACUUM`, `INVALID_INPUT`, `BROWSER_DISCONNECTED`, `TAB_NOT_FOUND`, `CLICK_FAILED`, `FILL_REQUIRED`.
-
-## Daemon Management
-
-```bash
-./ghost-cli daemon-status   # Is the daemon up?
-./ghost-cli daemon-stop     # Shut it down (drops all connections)
-```
+`ELEMENT_NOT_FOUND`, `NAVIGATION_TIMEOUT`, `NO_BROWSER`, `NO_VACUUM`, `INVALID_INPUT`, `BROWSER_DISCONNECTED`, `TAB_NOT_FOUND`, `CLICK_FAILED`, `FILL_REQUIRED`
