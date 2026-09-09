@@ -11,14 +11,14 @@ Browser automation through a Chrome extension that uses native Chrome APIs.
 
 1. Install the extension: `chrome://extensions/` → Developer Mode → Load unpacked → select `extension/`
 2. Click the Ghost Bridge icon → "Connect"
-3. Start the bridge server: `python extension/bridge_server.py &`
+3. Run `./install-extension.sh` from the Ghost repository (or start `.venv/bin/python bridge_server.py`)
 4. Verify: `curl -s http://127.0.0.1:9378/status`
 
 ## Architecture
 ```text
 Agent
   ↓ HTTP POST to localhost:9378
-Bridge Server (extension/bridge_server.py)
+Bridge Server (bridge_server.py)
   ↓ WebSocket
 Chrome Extension (extension/)    ← native chrome.tabs / chrome.scripting APIs
   ↓
@@ -57,6 +57,17 @@ curl -s -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
   -d '{"command":"ghost_vacuum","args":{"url":"https://example.com","limit":30}}'
 ```
+
+### Read a PDF
+```bash
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_pdf_read","args":{"page_start":1,"page_end":3,"mode":"auto"}}'
+```
+
+`auto` uses embedded text and applies OCR only to pages without text. PDF fetching
+stays in the signed-in Chrome session; bytes are transferred through a bounded,
+one-time loopback upload. HTTP(S) PDF tabs are supported.
 
 ### Click
 ```bash
@@ -128,6 +139,7 @@ Sites with strict CSP (YouTube, Google) block eval. Use `ghost_read` with a `sel
 | `ghost_vacuum` | Read page and return numbered interactive elements |
 | `ghost_click` | Click element by number from vacuum output |
 | `ghost_read` | Read page text content, optionally filtered by CSS selector |
+| `ghost_pdf_read` | Read page-indexed PDF text with OCR fallback |
 | `ghost_screenshot` | Capture the visible page |
 | `ghost_scroll` | Scroll the page (up/down/top/bottom) |
 | `ghost_key` | Send keyboard input (key press or typed text) |

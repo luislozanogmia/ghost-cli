@@ -12,6 +12,7 @@ automations/linkedin/browser_context/
 linkedin_auth.json
 playwright_auth.json
 *.lock
+*.pid
 ghost_daemon.pid
 ghost_chrome_proxy.pid
 chrome_transport_proxy.pid

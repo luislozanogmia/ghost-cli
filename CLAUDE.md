@@ -9,10 +9,9 @@ Install the Chrome extension:
 3. Click "Load unpacked" → select the `extension/` folder
 4. Click the Ghost Bridge icon in the toolbar → "Connect"
 
-Start the bridge server:
+Install dependencies and start the bridge server:
 ```bash
-pip install websockets aiohttp
-python extension/bridge_server.py &
+./install-extension.sh
 ```
 
 ## Using the Browser
@@ -45,6 +44,11 @@ curl -s -X POST http://127.0.0.1:9378/call \
 curl -s -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
   -d '{"command":"ghost_read","args":{"selector":"article","max_chars":4000}}'
+
+# Read the PDF open in the active Chrome tab
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_pdf_read","args":{"page_start":1,"page_end":3,"mode":"auto"}}'
 
 # Vacuum (numbered interactive elements)
 curl -s -X POST http://127.0.0.1:9378/call \

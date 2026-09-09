@@ -2112,6 +2112,22 @@ async def call_tool(name: str, arguments: dict | None) -> str:
     arguments = arguments or {}
 
     try:
+        if name == "ghost_pdf_read":
+            from bridge_transport import BridgeError, BridgeTransport
+
+            bridge_args = {key: value for key, value in arguments.items() if key != "instance_id"}
+            timeout = 300 if bridge_args.get("mode") in {"auto", "ocr"} else 90
+            try:
+                result = await asyncio.to_thread(
+                    BridgeTransport(timeout=timeout).call,
+                    "ghost_pdf_read",
+                    bridge_args,
+                    timeout,
+                )
+            except BridgeError as exc:
+                return f"Ghost error: {exc}"
+            return json.dumps(result, indent=2, ensure_ascii=False)
+
         if name == "ghost_instance_create":
             reuse_only = bool(arguments.get("reuse_only", False))
             instance, created = await _get_or_create_instance(

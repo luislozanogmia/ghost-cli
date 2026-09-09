@@ -347,6 +347,48 @@ def get_ghost_tools() -> list[ToolDef]:
             },
         ),
         ToolDef(
+            name="ghost_pdf_read",
+            description=(
+                "Read the PDF open in the user's live Chrome tab through the Ghost extension bridge. "
+                "Returns page-indexed text and uses OCR only for pages without embedded text by default. "
+                "Use mode='text' to disable OCR or mode='ocr' to force OCR."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "integer",
+                        "description": "Optional Chrome tab ID. Omit to read the active tab.",
+                    },
+                    "page_start": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "First page to read, 1-based (default: 1).",
+                    },
+                    "page_end": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Last page to read, inclusive. Omit for the final page.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["auto", "text", "ocr"],
+                        "description": "Extraction mode (default: auto).",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000,
+                        "description": "Maximum total text characters returned (default: 50000).",
+                    },
+                    "password": {
+                        "type": "string",
+                        "description": "Optional password for an encrypted PDF.",
+                    },
+                },
+            },
+        ),
+        ToolDef(
             name="ghost_find_text",
             description=(
                 "Search the current page for a text string or regex pattern. "

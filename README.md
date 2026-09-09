@@ -6,10 +6,9 @@ Ghost Browser — AI browser automation via a Chrome extension and numbered acce
 
 ## Install
 
-1. Install Python dependencies:
+1. Install dependencies and start the bridge:
 ```bash
-pip install -r requirements.txt
-pip install websockets aiohttp
+./install-extension.sh
 ```
 
 2. Load the Chrome extension:
@@ -18,9 +17,9 @@ pip install websockets aiohttp
    - Click **Load unpacked** → select the `extension/` folder
    - Click the **Ghost Bridge** icon in the toolbar → **Connect**
 
-3. Start the bridge server:
+3. Or start the bridge server directly from the project environment:
 ```bash
-python extension/bridge_server.py &
+.venv/bin/python bridge_server.py &
 ```
 
 4. Verify:
@@ -36,7 +35,7 @@ The Chrome extension uses native Chrome APIs (`chrome.tabs`, `chrome.scripting`)
 ```
 Agent (curl / code)
   ↓ HTTP POST to localhost:9378
-Bridge Server (extension/bridge_server.py)
+Bridge Server (bridge_server.py)
   ↓ WebSocket
 Chrome Extension (extension/)
   ↓ chrome.tabs / chrome.scripting
@@ -70,6 +69,11 @@ curl -s -X POST http://127.0.0.1:9378/call \
 curl -s -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
   -d '{"command":"ghost_read","args":{"max_chars":4000}}'
+
+# Read the PDF open in the active tab (OCRs only scanned pages)
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_pdf_read","args":{"page_start":1,"page_end":3,"mode":"auto"}}'
 ```
 
 ## Commands
@@ -90,6 +94,7 @@ All commands are sent as HTTP POST to `http://127.0.0.1:9378/call` with `Content
 | Command | Purpose |
 |---------|---------|
 | `ghost_read` | Extract clean readable text (optional CSS `selector`) |
+| `ghost_pdf_read` | Extract page-indexed PDF text with OCR fallback |
 | `ghost_eval` | Run JavaScript on the page (CSP-permitting) |
 | `ghost_screenshot` | Capture the visible page |
 

@@ -79,6 +79,30 @@ curl -s -X POST http://127.0.0.1:9378/call \
 | `max_chars` | int | 8000 | Truncate output |
 | `selector` | string | — | CSS selector to scope reading |
 
+### ghost_pdf_read
+
+Read the HTTP(S) PDF open in the active Chrome tab. Results are page-indexed; `auto`
+uses embedded text when present and OCR only on pages that have none.
+
+```bash
+curl -s -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"ghost_pdf_read","args":{"page_start":1,"page_end":3,"mode":"auto","max_chars":50000}}'
+```
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tab_id` | int | active tab | Chrome tab containing the PDF |
+| `page_start` | int | 1 | First page, 1-based |
+| `page_end` | int | final page | Last page, inclusive |
+| `mode` | enum | `auto` | `auto`, `text`, or `ocr` |
+| `max_chars` | int | 50000 | Maximum total returned characters |
+| `password` | string | — | Password for an encrypted PDF |
+
+The bridge accepts PDF bytes only through a one-time loopback upload and enforces
+50 MB, 300-page, page-range, and output-size limits. `blob:`, `file:`, and `data:`
+viewer sources are rejected explicitly.
+
 ### ghost_scroll
 
 Scroll the page.

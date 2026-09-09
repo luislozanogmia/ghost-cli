@@ -122,6 +122,9 @@ async function handleCommand(command, args) {
     case "ghost_read":
       return readPage(args);
 
+    case "ghost_pdf_fetch":
+      return fetchPdf(args);
+
     case "ghost_click":
       return click(args);
 
@@ -273,6 +276,93 @@ async function readPage(args) {
   const content = await readTabContent(tabId, args.max_chars || 4000, args.selector);
   const tab = await chrome.tabs.get(tabId);
   return { url: tab.url, title: tab.title, content };
+}
+
+async function fetchPdf(args) {
+  const tabId = await getActiveTabId(args);
+  const tab = await chrome.tabs.get(tabId);
+  const sourceUrl = new URL(tab.url || "");
+  if (!['http:', 'https:'].includes(sourceUrl.protocol)) {
+    throw new Error(`UNSUPPORTED_PDF_SOURCE: ${sourceUrl.protocol || 'unknown'} URLs are not supported`);
+  }
+
+  const uploadUrl = new URL(args.upload_url || "");
+  const expectedPort = String(port + 1);
+  const expectedPath = `/pdf-upload/${args.upload_token}`;
+  if (
+    uploadUrl.protocol !== "http:" ||
+    uploadUrl.hostname !== "127.0.0.1" ||
+    uploadUrl.port !== expectedPort ||
+    uploadUrl.pathname !== expectedPath ||
+    uploadUrl.search ||
+    uploadUrl.hash
+  ) {
+    throw new Error("INVALID_UPLOAD_URL: PDF bytes may only be uploaded to the Ghost loopback bridge");
+  }
+
+  const maxBytes = Number(args.max_bytes) || 50 * 1024 * 1024;
+  const response = await fetch(sourceUrl.href, {
+    credentials: "include",
+    cache: "no-store",
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    throw new Error(`PDF_FETCH_FAILED: HTTP ${response.status} ${response.statusText}`);
+  }
+  const declaredLength = Number(response.headers.get("content-length")) || 0;
+  if (declaredLength > maxBytes) {
+    throw new Error(`PDF_TOO_LARGE: content-length ${declaredLength} exceeds ${maxBytes} bytes`);
+  }
+
+  const chunks = [];
+  let byteLength = 0;
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    byteLength += value.byteLength;
+    if (byteLength > maxBytes) {
+      await reader.cancel();
+      throw new Error(`PDF_TOO_LARGE: download exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+
+  const pdfBytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    pdfBytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let signatureOffset = 0;
+  while (signatureOffset < pdfBytes.length && [9, 10, 12, 13, 32].includes(pdfBytes[signatureOffset])) {
+    signatureOffset += 1;
+  }
+  const signature = String.fromCharCode(...pdfBytes.slice(signatureOffset, signatureOffset + 5));
+  if (signature !== "%PDF-") {
+    throw new Error("NOT_A_PDF: downloaded content does not have a PDF signature");
+  }
+
+  const upload = await fetch(uploadUrl.href, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/pdf",
+      "X-Ghost-PDF-Token": args.upload_token,
+    },
+    body: pdfBytes,
+  });
+  if (!upload.ok) {
+    const detail = await upload.text();
+    throw new Error(`PDF_UPLOAD_FAILED: HTTP ${upload.status} ${detail.slice(0, 300)}`);
+  }
+
+  return {
+    id: tab.id,
+    url: tab.url,
+    title: tab.title,
+    content_type: response.headers.get("content-type") || "application/pdf",
+    bytes: byteLength,
+  };
 }
 
 async function readTabContent(tabId, maxChars, selector) {

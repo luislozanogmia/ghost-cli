@@ -32,14 +32,13 @@ Your actual Chrome browser
 
 ### 2. Install server dependencies
 
-```bash
-pip install websockets aiohttp
-```
+From the repository root, run `./install-extension.sh`. It creates/uses `.venv`
+and installs the bridge, PDF extraction, rendering, and OCR dependencies.
 
 ### 3. Start the bridge server
 
 ```bash
-python extension/bridge_server.py
+.venv/bin/python bridge_server.py
 ```
 
 You'll see:
@@ -79,6 +78,11 @@ curl -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
   -d '{"command": "ghost_read", "args": {"max_chars": 2000}}'
 
+# Read the PDF open in the active tab
+curl -X POST http://127.0.0.1:9378/call \
+  -H 'Content-Type: application/json' \
+  -d '{"command": "ghost_pdf_read", "args": {"mode": "auto", "page_end": 3}}'
+
 # Screenshot
 curl -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
@@ -107,6 +111,7 @@ Once the bridge is running, ghost-cli uses it automatically:
 | `ghost_navigate` | Navigate to URL | `url`, `tab_id` |
 | `ghost_vacuum` | Navigate + read page | `url`, `limit`, `selector` |
 | `ghost_read` | Read current page content | `max_chars`, `selector` |
+| `ghost_pdf_read` | Read page-indexed PDF text with OCR fallback | `tab_id`, `page_start`, `page_end`, `mode`, `max_chars` |
 | `ghost_click` | Click an element | `choice` or `selector` |
 | `ghost_fill` | Fill an input | `choice`/`selector`, `value` |
 | `ghost_key` | Press a key or type text | `key` or `text` |
