@@ -12,8 +12,7 @@ Ghost CLI sends commands. In-App Browser executes them against its existing
 
 **Primary: Unix domain socket** (macOS/Linux)
 
-- Path: `~/.in-app-browser/ghost-bridge.sock`
-- Override: `GHOST_IN_APP_BROWSER_SOCKET` env var
+- Path: configured by `GHOST_IN_APP_BROWSER_SOCKET`, otherwise the operating-system runtime directory
 - Security: filesystem permissions restrict access to the owning user
 
 **Fallback: Authenticated loopback TCP** (Windows or explicit config)
@@ -48,8 +47,8 @@ newlines.
 ## Authentication
 
 Every request includes a `token` field. In-App Browser validates it against a shared
-secret stored at `~/.in-app-browser/ghost-bridge.token`. Ghost CLI reads the same
-file at startup.
+secret stored at `GHOST_IN_APP_BROWSER_TOKEN_FILE`. Ghost CLI reads the same file
+at startup.
 
 ```json
 {
@@ -507,8 +506,8 @@ OR:
 
 In-App Browser needs to add a server endpoint that:
 
-1. Listens on `~/.in-app-browser/ghost-bridge.sock` (Unix socket)
-2. Reads the shared token from `~/.in-app-browser/ghost-bridge.token`
+1. Listens on the socket configured by `GHOST_IN_APP_BROWSER_SOCKET`
+2. Reads the shared token from `GHOST_IN_APP_BROWSER_TOKEN_FILE`
 3. Parses length-prefixed JSON requests
 4. Validates `token` and `id` fields
 5. Routes `method` to the existing `browser.cjs` IPC actions

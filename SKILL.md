@@ -11,7 +11,7 @@ Browser automation through a Chrome extension that uses native Chrome APIs.
 
 1. Install the extension: `chrome://extensions/` → Developer Mode → Load unpacked → select `extension/`
 2. Click the Ghost Bridge icon → "Connect"
-3. Run `./install-extension.sh` from the Ghost repository (or start `.venv/bin/python bridge_server.py`)
+3. Run `./install-extension.sh` from the Ghost repository (or start `python3 bridge_server.py`)
 4. Verify: `curl -s http://127.0.0.1:9378/status`
 
 ## Architecture
@@ -126,7 +126,7 @@ curl -s -X POST http://127.0.0.1:9378/call \
   -d '{"command":"ghost_eval","args":{"script":"() => document.title"}}'
 ```
 
-Sites with strict CSP (YouTube, Google) block eval. Use `ghost_read` with a `selector` instead.
+Sites with strict CSP may block eval. Use `ghost_read` with a `selector` instead.
 
 ## All available commands
 
@@ -158,22 +158,6 @@ Sites with strict CSP (YouTube, Google) block eval. Use `ghost_read` with a `sel
 2. Re-vacuum after navigation — element numbers are only valid for the current page.
 3. Call `ghost_save_auth` immediately after manual login so auth persists.
 4. Never attempt to type passwords.
-
-## LinkedIn
-
-LinkedIn has a dedicated persistent profile and launcher:
-
-```bash
-./browser_context/linkedin/open_linkedin_ghost.sh open
-./browser_context/linkedin/open_linkedin_ghost.sh vacuum
-```
-
-Manual re-login:
-```bash
-./browser_context/linkedin/open_linkedin_ghost.sh login
-# User logs in manually
-./browser_context/linkedin/open_linkedin_ghost.sh save
-```
 
 ## Error Codes
 

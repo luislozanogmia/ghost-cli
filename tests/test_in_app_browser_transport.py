@@ -128,8 +128,8 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
         self.assertIn("tab_id", result)
 
     def test_navigate_with_tab_id(self):
-        result = self.transport.navigate("https://test.com", tab_id=1)
-        self.assertEqual(result["url"], "https://test.com")
+        result = self.transport.navigate("https://test.example.com", tab_id=1)
+        self.assertEqual(result["url"], "https://test.example.com")
 
     # -- Read --
 
@@ -190,19 +190,19 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
         self.assertGreater(len(result["tabs"]), 0)
 
     def test_tab_open(self):
-        result = self.transport.tab_open("https://new-tab.com")
+        result = self.transport.tab_open("https://new-tab.example.com")
         self.assertIn("tab_id", result)
-        self.assertEqual(result["url"], "https://new-tab.com")
+        self.assertEqual(result["url"], "https://new-tab.example.com")
 
     def test_tab_switch(self):
         # Open a second tab then switch back to tab 1
-        self.transport.tab_open("https://tab2.com")
+        self.transport.tab_open("https://tab2.example.com")
         result = self.transport.tab_switch(1)
         self.assertEqual(result["tab_id"], 1)
 
     def test_tab_close(self):
         # Open a tab then close it
-        opened = self.transport.tab_open("https://to-close.com")
+        opened = self.transport.tab_open("https://to-close.example.com")
         tab_id = opened["tab_id"]
         result = self.transport.tab_close(tab_id)
         self.assertTrue(result["closed"])
@@ -210,13 +210,13 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
     # -- Navigation history --
 
     def test_back(self):
-        self.transport.navigate("https://page1.com")
-        self.transport.navigate("https://page2.com")
+        self.transport.navigate("https://page1.example.com")
+        self.transport.navigate("https://page2.example.com")
         result = self.transport.back()
         self.assertTrue(result.get("navigated"))
 
     def test_reload(self):
-        self.transport.navigate("https://reload-me.com")
+        self.transport.navigate("https://reload-me.example.com")
         result = self.transport.reload()
         self.assertTrue(result["reloaded"])
 

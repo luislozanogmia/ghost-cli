@@ -9,7 +9,7 @@ Current release: **0.3.2**
 - `ghost_pdf_read` returns page-indexed text from PDFs open in live Chrome.
 - `auto` mode uses embedded PDF text first and OCR only for image-only pages.
 - PDF bytes stay local through a bounded, one-time loopback transfer; downloads are limited to 50 MB and 300 pages.
-- The installer uses Ghost's isolated `.venv`, and Python bridge files now live outside the unpacked Chrome extension directory.
+- Python bridge files live outside the unpacked Chrome extension directory.
 
 <img width="607" height="453" alt="Screenshot at Jun 15 22-08-42" src="https://github.com/user-attachments/assets/f9481c3d-74a7-4049-ae13-20f83b72d59f" />
 
@@ -28,7 +28,7 @@ Current release: **0.3.2**
 
 3. Or start the bridge server directly from the project environment:
 ```bash
-.venv/bin/python bridge_server.py &
+python3 bridge_server.py &
 ```
 
 4. Verify:
@@ -62,12 +62,12 @@ curl -s http://127.0.0.1:9378/status
 # Navigate somewhere
 curl -s -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_navigate","args":{"url":"https://news.ycombinator.com"}}'
+  -d '{"command":"ghost_navigate","args":{"url":"https://example.com"}}'
 
 # Get numbered interactive elements
 curl -s -X POST http://127.0.0.1:9378/call \
   -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_vacuum","args":{"url":"https://news.ycombinator.com","limit":30}}'
+  -d '{"command":"ghost_vacuum","args":{"url":"https://example.com","limit":30}}'
 
 # Click element #5
 curl -s -X POST http://127.0.0.1:9378/call \
@@ -159,37 +159,19 @@ All errors return: `Error [CODE]: message`
 - **Use `limit` to reduce noise.** Dense pages return 80+ elements. Set `"limit": 20` or `"limit": 30`.
 - **`ghost_read` for content, `ghost_vacuum` for interaction.** If you just need text, use `ghost_read`.
 - **Save auth after manual login.** Call `ghost_save_auth` right after the user logs in.
-- **`ghost_eval` won't work on sites with strict CSP** (YouTube, Google). Use `ghost_read` with a `selector` instead.
+- **`ghost_eval` may be blocked by strict CSP.** Use `ghost_read` with a `selector` instead.
 
 ## Extraction Recipes
 
 Built-in recipes for `ghost_extract`:
 
-- `linkedin_search` — profile list from LinkedIn search results
-- `linkedin_profile` — formatted profile card
 - `page_links` — link list from any page
 - `page_meta` — title, description, OG tags
-
-## LinkedIn
-
-LinkedIn has a dedicated persistent profile and launcher:
-
-```bash
-./browser_context/linkedin/open_linkedin_ghost.sh open
-./browser_context/linkedin/open_linkedin_ghost.sh vacuum
-```
-
-Manual re-login:
-```bash
-./browser_context/linkedin/open_linkedin_ghost.sh login
-# User logs in manually
-./browser_context/linkedin/open_linkedin_ghost.sh save
-```
 
 ## Batch Extraction
 
 ```bash
-./ghost-cli batch --queries queries.json --recipe linkedin_search --output results.json
+./ghost-cli batch --queries queries.json --recipe page_links --output results.json
 ```
 
 ## Known Limitations & Roadmap

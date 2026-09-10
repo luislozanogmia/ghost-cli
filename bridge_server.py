@@ -5,7 +5,7 @@ Replaces CDP transport entirely. Agents call ghost-cli → daemon → this serve
 → Chrome extension → Chrome APIs. No CDP. No debugging dialogs.
 
 Usage:
-    .venv/bin/python bridge_server.py [--port 9377]
+    python3 bridge_server.py [--port 9377]
 
 The server exposes:
     ws://127.0.0.1:9377/ghost-bridge  — Chrome extension connects here

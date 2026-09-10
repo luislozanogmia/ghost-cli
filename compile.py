@@ -34,8 +34,8 @@ def domain_to_classname(url: str) -> str:
 
     Examples:
         https://example.com       -> ExampleCom
-        https://open.spotify.com  -> OpenSpotifyCom
-        https://github.com/foo    -> GithubCom
+        https://app.example.com   -> AppExampleCom
+        https://docs.example.com  -> DocsExampleCom
     """
     parsed = urlparse(url)
     host = parsed.hostname or parsed.netloc or "unknown"

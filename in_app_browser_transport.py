@@ -20,11 +20,7 @@ Usage:
     from in_app_browser_transport import InAppBrowserTransport, InAppBrowserTransportError
 
     transport = InAppBrowserTransport()              # defaults
-    transport = InAppBrowserTransport(               # explicit
-        socket_path="/tmp/ghost-in-app-browser.sock",
-        token="secret",
-        timeout=30,
-    )
+    transport = InAppBrowserTransport(token="secret", timeout=30)
 
     status = transport.status()
     result = transport.call("navigate", {"url": "https://example.com"})
@@ -38,6 +34,7 @@ import json
 import os
 import socket
 import struct
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -48,11 +45,12 @@ from typing import Any, Optional
 # Constants
 # ---------------------------------------------------------------------------
 
+DEFAULT_RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", tempfile.gettempdir())) / "ghost"
 DEFAULT_SOCKET_PATH = Path(
-    os.environ.get(
-        "GHOST_IN_APP_BROWSER_SOCKET",
-        os.path.expanduser("~/.in-app-browser/ghost-bridge.sock"),
-    )
+    os.environ.get("GHOST_IN_APP_BROWSER_SOCKET", DEFAULT_RUNTIME_DIR / "in-app-browser.sock")
+)
+DEFAULT_TOKEN_PATH = Path(
+    os.environ.get("GHOST_IN_APP_BROWSER_TOKEN_FILE", DEFAULT_RUNTIME_DIR / "in-app-browser.token")
 )
 DEFAULT_TCP_HOST = "127.0.0.1"
 DEFAULT_TCP_PORT = int(os.environ.get("GHOST_IN_APP_BROWSER_PORT", "9400"))
@@ -174,10 +172,8 @@ class InAppBrowserTransport:
         # Try to read token from env or token file
         if self.token is None:
             self.token = os.environ.get("GHOST_IN_APP_BROWSER_TOKEN")
-        if self.token is None:
-            token_file = Path(os.path.expanduser("~/.in-app-browser/ghost-bridge.token"))
-            if token_file.exists():
-                self.token = token_file.read_text().strip()
+        if self.token is None and DEFAULT_TOKEN_PATH.exists():
+            self.token = DEFAULT_TOKEN_PATH.read_text().strip()
 
     # ------------------------------------------------------------------
     # Connection

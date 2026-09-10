@@ -8,9 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXT_DIR="$SCRIPT_DIR/extension"
 BRIDGE="$SCRIPT_DIR/bridge_server.py"
 GUIDE="$EXT_DIR/install-guide.html"
-VENV_DIR="$SCRIPT_DIR/.venv"
 PID_FILE="$SCRIPT_DIR/logs/ghost_extension_bridge.pid"
 LOG_FILE="$SCRIPT_DIR/logs/ghost_extension_bridge.log"
+PYTHON_BIN="${GHOST_PYTHON:-python3}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -23,18 +23,18 @@ echo ""
 echo -e "${BOLD}🔌 Ghost Browser Extension Installer${NC}"
 echo ""
 
-# Step 0: Create/use Ghost's isolated Python environment and install dependencies
+# Step 0: Install dependencies for the selected Python interpreter
 echo -e "${CYAN}Checking dependencies...${NC}"
-if [ ! -x "$VENV_DIR/bin/python" ] && [ ! -x "$VENV_DIR/Scripts/python.exe" ]; then
-    python3 -m venv "$VENV_DIR"
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || {
+    echo "Python interpreter not found: $PYTHON_BIN" >&2
+    exit 1
+}
+PIP_SCOPE=()
+if "$PYTHON_BIN" -c 'import sys; raise SystemExit(sys.prefix != sys.base_prefix)' 2>/dev/null; then
+    PIP_SCOPE=(--user)
 fi
-if [ -x "$VENV_DIR/bin/python" ]; then
-    PYTHON_BIN="$VENV_DIR/bin/python"
-else
-    PYTHON_BIN="$VENV_DIR/Scripts/python.exe"
-fi
-"$PYTHON_BIN" -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
-echo -e "${GREEN}✓ Dependencies ready in $VENV_DIR${NC}"
+"$PYTHON_BIN" -m pip install "${PIP_SCOPE[@]}" --quiet -r "$SCRIPT_DIR/requirements.txt"
+echo -e "${GREEN}✓ Dependencies ready${NC}"
 
 # Copy extension path to clipboard
 echo "$EXT_DIR" | pbcopy 2>/dev/null && echo -e "${GREEN}✓ Extension path copied to clipboard${NC}" || true

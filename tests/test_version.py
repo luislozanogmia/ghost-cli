@@ -24,6 +24,10 @@ class VersionTests(unittest.TestCase):
         manifest = json.loads((REPO_ROOT / "extension" / "manifest.json").read_text())
         self.assertEqual(manifest["version"], EXPECTED_VERSION)
 
+    def test_chrome_extension_handshake_uses_manifest_version(self):
+        source = (REPO_ROOT / "extension" / "background.js").read_text()
+        self.assertIn("version: chrome.runtime.getManifest().version", source)
+
     def test_mcp_client_version(self):
         source = (REPO_ROOT / "tool_stdio_client.py").read_text()
         self.assertIn(f'"clientInfo": {{"name": "ghost-cli", "version": "{EXPECTED_VERSION}"}}', source)

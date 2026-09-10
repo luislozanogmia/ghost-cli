@@ -73,7 +73,7 @@ class BridgeTransport:
         except urllib.error.URLError as e:
             raise BridgeError(
                 f"NO_BRIDGE: Cannot reach bridge server at {self.base_url}. "
-                f"Start it with: .venv/bin/python bridge_server.py"
+                f"Start it with: python3 bridge_server.py"
             )
 
     def ping(self):

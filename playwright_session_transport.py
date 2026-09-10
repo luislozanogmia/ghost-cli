@@ -9,11 +9,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-DEFAULT_CODEX_HOME = Path(os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex")))
-DEFAULT_PWCLI = DEFAULT_CODEX_HOME / "skills" / "playwright" / "scripts" / "playwright_cli.sh"
-DEFAULT_PWMGR = DEFAULT_CODEX_HOME / "skills" / "playwright" / "scripts" / "playwright_manager.py"
-DEFAULT_STATE_PRESET = "linkedin"
-APPROVED_PLAYWRIGHT_SESSIONS = {"linkedin-json"}
+DEFAULT_PWCLI = Path(os.environ.get("GHOST_PLAYWRIGHT_CLI", "playwright_cli.sh"))
+DEFAULT_PWMGR = Path(os.environ.get("GHOST_PLAYWRIGHT_MANAGER", "playwright_manager.py"))
+DEFAULT_STATE_PRESET = "default"
+APPROVED_PLAYWRIGHT_SESSIONS = {"browser-json"}
 
 
 class PlaywrightSessionTransport:

@@ -61,10 +61,7 @@ def get_ghost_tools() -> list[ToolDef]:
                     "playwright_session": {
                         "type": "string",
                         "description": (
-                            "Attach Ghost to a managed Playwright CLI session instead of a Chrome/CDP target. "
-                            "For LinkedIn, prefer the stable launcher under "
-                            "browser_context/linkedin/ and the shared auth state at "
-                            "browser_context/linkedin_auth.json."
+                            "Attach Ghost to an approved managed Playwright CLI session instead of a Chrome/CDP target."
                         ),
                     },
                     "reuse_only": {
@@ -211,7 +208,7 @@ def get_ghost_tools() -> list[ToolDef]:
         ToolDef(
             name="ghost_save_auth",
             description=(
-                "Export browser auth (cookies, localStorage) from one instance to linkedin_auth.json. "
+                "Export browser auth (cookies and localStorage) from one instance to browser_auth.json. "
                 "Call after logging into a site to persist the session across restarts."
             ),
             input_schema={
@@ -225,8 +222,7 @@ def get_ghost_tools() -> list[ToolDef]:
             name="ghost_eval",
             description=(
                 "Run a JavaScript function on the current page and return the result. "
-                "Use this to extract elements that the accessibility tree misses (e.g. WhatsApp chat list, "
-                "LinkedIn feed items, SPAs with custom renders). "
+                "Use this to extract elements that the accessibility tree misses, including custom-rendered SPAs. "
                 "Pass a JS arrow function string: '() => document.title' or "
                 "'() => [...document.querySelectorAll(\"span[title]\")].map(e=>e.title).join(\"\\\\n\")'"
             ),
@@ -277,9 +273,9 @@ def get_ghost_tools() -> list[ToolDef]:
             name="ghost_extract",
             description=(
                 "Smart vacuum: extract page content using a named recipe and return a clean "
-                "numbered list (same format as ghost_vacuum). Recipes know specific page "
-                "structures (LinkedIn, generic links, meta tags) and strip all noise. "
-                "Built-in recipes: 'linkedin_search', 'linkedin_profile', 'page_links', 'page_meta'. "
+                "numbered list (same format as ghost_vacuum). Recipes handle generic links "
+                "and page metadata while stripping noise. "
+                "Built-in recipes: 'page_links', 'page_meta'. "
                 "Or pass a custom JS arrow function via 'script'. "
                 "Use ghost_eval if you need raw JS output instead of formatted text."
             ),
@@ -291,8 +287,6 @@ def get_ghost_tools() -> list[ToolDef]:
                         "type": "string",
                         "description": (
                             "Named extraction recipe. Built-in: "
-                            "'linkedin_search' (numbered profile list from search results), "
-                            "'linkedin_profile' (formatted profile card), "
                             "'page_links' (numbered link list), "
                             "'page_meta' (title, description, og tags as text). "
                             "Omit to use custom JS via 'script' parameter."
@@ -422,7 +416,7 @@ def get_ghost_tools() -> list[ToolDef]:
             name="ghost_scroll",
             description=(
                 "Scroll the page down (or up) to load lazy content, then re-vacuum. "
-                "Use this on infinite-scroll pages (LinkedIn feed, Twitter, search results) "
+                "Use this on infinite-scroll feeds and search results "
                 "where ghost_more only paginates cached elements but doesn't load NEW content. "
                 "After scrolling, returns fresh vacuum menu with newly loaded elements."
             ),

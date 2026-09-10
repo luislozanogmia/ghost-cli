@@ -390,7 +390,7 @@
         const detail = document.getElementById('statusDetail');
         title.className = 'disconnected';
         title.textContent = '⚠ Bridge server not running';
-        detail.textContent = 'Run from the repository root: .venv/bin/python bridge_server.py &';
+        detail.textContent = 'Run from the repository root: python3 bridge_server.py &';
       }
       setTimeout(checkStatus, 2000);
     }

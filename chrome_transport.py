@@ -4,8 +4,10 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -20,21 +22,6 @@ from tool_stdio_client import ToolProcessClient
 _PAGE_LINE_RE = re.compile(r"^\s*(\d+):\s+(.*?)(\s+\[selected\])?\s*$")
 _PROXY_URL = "http://127.0.0.1:8766"
 _PROXY_SCRIPT = Path(__file__).parent / "chrome_transport_proxy.py"
-_VENV_ROOT = Path(__file__).resolve().parent / ".venv"
-_PROXY_PYTHON = (
-    _VENV_ROOT / "Scripts" / "python.exe"
-    if (_VENV_ROOT / "Scripts" / "python.exe").exists()
-    else _VENV_ROOT / "bin" / "python"
-)
-_DEFAULT_CHROME_PATHS = (
-    Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-    Path(os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")),
-    Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Google/Chrome/Application/chrome.exe",
-    Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Google/Chrome/Application/chrome.exe",
-    Path(os.environ.get("LOCALAPPDATA", r"C:\Users\Default\AppData\Local")) / "Google/Chrome/Application/chrome.exe",
-)
-
-
 def _parse_pages(text: str) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     for line in text.splitlines():
@@ -77,10 +64,17 @@ def _proxy_is_healthy() -> bool:
 
 
 def _resolve_chrome_path() -> str:
-    for candidate in _DEFAULT_CHROME_PATHS:
-        if candidate.exists():
+    configured = os.environ.get("GHOST_CHROME_PATH")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
             return str(candidate)
-    raise RuntimeError("Could not locate chrome.exe for the Chrome transport.")
+        raise RuntimeError("GHOST_CHROME_PATH does not point to a browser executable.")
+    for command in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        discovered = shutil.which(command)
+        if discovered:
+            return discovered
+    raise RuntimeError("Browser executable not found. Set GHOST_CHROME_PATH explicitly.")
 
 
 def _tool_command(browser_url: Optional[str], auto_connect: bool) -> tuple[str, list[str]]:
@@ -157,7 +151,7 @@ class ChromeTransportRuntime:
             if os.name == "nt":
                 creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
             subprocess.Popen(
-                [str(_PROXY_PYTHON), str(_PROXY_SCRIPT)],
+                [sys.executable, str(_PROXY_SCRIPT)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,

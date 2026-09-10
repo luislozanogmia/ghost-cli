@@ -621,7 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_batch = sub.add_parser("batch", help="Batch extract data from multiple URLs.")
     p_batch.add_argument("--queries", required=True, help="JSON file or inline JSON array of {url, recipe?, script?, label?}")
-    p_batch.add_argument("--recipe", default=None, help="Default recipe to use for all URLs (e.g. 'linkedin_search')")
+    p_batch.add_argument("--recipe", default=None, help="Default recipe to use for all URLs (e.g. 'page_links')")
     p_batch.add_argument("--output", "-o", default=None, help="Output JSON file path")
     p_batch.add_argument("--delay", type=int, default=4, help="Seconds between navigations (default: 4)")
     p_batch.add_argument("--max-items", type=int, default=10, help="Max items per extraction (default: 10)")

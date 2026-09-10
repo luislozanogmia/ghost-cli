@@ -1,15 +1,12 @@
 __pycache__/
 *.pyc
 *.pyo
-.venv/
 venv/
 .playwright-cli/
 browser_context/
 browser_context_instances/
 browser_context_standalone/
 browser_context_isolated_*/
-automations/linkedin/browser_context/
-linkedin_auth.json
 playwright_auth.json
 *.lock
 *.pid

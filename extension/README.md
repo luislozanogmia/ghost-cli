@@ -32,13 +32,13 @@ Your actual Chrome browser
 
 ### 2. Install server dependencies
 
-From the repository root, run `./install-extension.sh`. It creates/uses `.venv`
-and installs the bridge, PDF extraction, rendering, and OCR dependencies.
+From the repository root, run `./install-extension.sh`. It installs the bridge,
+PDF extraction, rendering, and OCR dependencies for the selected Python interpreter.
 
 ### 3. Start the bridge server
 
 ```bash
-.venv/bin/python bridge_server.py
+python3 bridge_server.py
 ```
 
 You'll see:

@@ -169,8 +169,8 @@ _install_exception_logging()
 DEFAULT_INSTANCE_ID = "default"
 DEFAULT_LIMIT = 50
 GHOST_DIR = Path(__file__).parent
-AUTH_PATH = GHOST_DIR / "browser_context" / "linkedin_auth.json"
-AUTOMATION_AUTH_PATH = GHOST_DIR / "automations" / "linkedin" / "playwright_auth.json"
+AUTH_PATH = GHOST_DIR / "browser_context" / "browser_auth.json"
+AUTOMATION_AUTH_PATH = GHOST_DIR / "automations" / "browser" / "playwright_auth.json"
 LIQUID_CDP_CANDIDATES = (
     "http://127.0.0.1:9222",
     "http://localhost:9222",
@@ -234,28 +234,8 @@ def _context_dir_for(instance_id: str) -> Path:
 
 
 def _live_chrome_devtools_port_candidates() -> tuple[Path, ...]:
-    home = Path.home()
-    if sys.platform == "darwin":
-        return (
-            home / "Library/Application Support/Google/Chrome/DevToolsActivePort",
-            home / "Library/Application Support/Google/Chrome Beta/DevToolsActivePort",
-            home / "Library/Application Support/Google/Chrome Dev/DevToolsActivePort",
-            home / "Library/Application Support/Google/Chrome Canary/DevToolsActivePort",
-        )
-    if os.name == "nt":
-        local = Path(os.environ.get("LOCALAPPDATA", str(home / "AppData/Local")))
-        return (
-            local / "Google/Chrome/User Data/DevToolsActivePort",
-            local / "Google/Chrome Beta/User Data/DevToolsActivePort",
-            local / "Google/Chrome Dev/User Data/DevToolsActivePort",
-            local / "Google/Chrome SxS/User Data/DevToolsActivePort",
-        )
-    return (
-        home / ".config/google-chrome/DevToolsActivePort",
-        home / ".config/google-chrome-beta/DevToolsActivePort",
-        home / ".config/google-chrome-unstable/DevToolsActivePort",
-        home / ".config/chromium/DevToolsActivePort",
-    )
+    configured = os.environ.get("GHOST_DEVTOOLS_ACTIVE_PORT_FILE")
+    return (Path(configured).expanduser(),) if configured else ()
 
 
 def _read_devtools_websocket_url(port_file: Path) -> Optional[str]:
@@ -924,7 +904,7 @@ class GhostInstance:
             self.page_title = self.page_url or "Chrome Page"
 
             # Write snapshot to a temp file to avoid transferring the full AX tree
-            # as a response payload (which times out on heavy SPAs like WhatsApp).
+            # as a response payload (which can time out on heavy SPAs).
             # This mirrors the Playwright path which reads the AX tree directly.
             import re as _re, tempfile, os as _os
 
@@ -941,24 +921,7 @@ class GhostInstance:
                     except OSError:
                         pass
 
-            def _use_here_uid(snap: str) -> Optional[str]:
-                """Return the uid of the 'Use here' button if the dialog is the only content."""
-                m = _re.search(r'(uid=\S+)\s+button\s+"Use here"', snap)
-                return m.group(1) if m else None
-
             snapshot = await _take_snapshot_to_file()
-
-            # Auto-dismiss "WhatsApp is open in another window" dialog.
-            # Having two CDP connections (proxy + Claude Code) triggers it on every select_page.
-            # Retry up to 3 times: click "Use here" and re-snapshot.
-            for _attempt in range(3):
-                uid = _use_here_uid(snapshot)
-                if uid is None:
-                    break
-                LOGGER.info("Ghost: dismissing 'Use here' dialog (attempt %d), uid=%s", _attempt + 1, uid)
-                await self._chrome_transport.call_tool("click", {"uid": uid, "includeSnapshot": False}, timeout_seconds=10.0)
-                await asyncio.sleep(1.5)
-                snapshot = await _take_snapshot_to_file()
 
             if not snapshot:
                 return "Error: Could not get browser snapshot."
@@ -968,57 +931,6 @@ class GhostInstance:
             self.current_offset = 0
 
             result = vacuum_from_snapshot_text(snapshot, url=self.page_url, title=self.page_title)
-
-            # Inject JS-supplemented clickable elements for known SPAs
-            from helpers.vacuum import _JS_SUPPLEMENTS
-            for domain_key, entry in _JS_SUPPLEMENTS.items():
-                if domain_key in self.page_url:
-                    try:
-                        raw = await self._chrome_transport.call_tool(
-                            "evaluate_script",
-                            {"function": entry["script"]},
-                            timeout_seconds=15.0,
-                        )
-                        import json as _json, re as _re2
-                        # chrome-devtools transport wraps output: extract JSON from ```json ... ``` block
-                        _m = _re2.search(r'```(?:json)?\s*([\s\S]*?)```', raw or "")
-                        raw_json = _m.group(1).strip() if _m else (raw or "").strip()
-                        items = _json.loads(raw_json)
-                        # double-encoded: script returned JSON.stringify(...)
-                        if isinstance(items, str):
-                            items = _json.loads(items)
-                        if isinstance(items, list) and items:
-                            supp_label = entry["label"]
-                            supp_elems = []
-                            for i, item in enumerate(items):
-                                if not isinstance(item, dict):
-                                    continue
-                                supp_elems.append({
-                                    "number": i + 1,
-                                    "role": "button",
-                                    "name": item.get("name", f"{supp_label} {i+1}"),
-                                    "ref": None,
-                                    "node": None,
-                                    "js_click": item.get("js_click"),
-                                })
-                            shift = len(supp_elems)
-                            # Shift existing element numbers to make room
-                            for e in result.elements:
-                                e["number"] += shift
-                            # Shift landmark_groups
-                            new_groups: dict = {}
-                            for region, nums in result._landmark_groups.items():
-                                new_groups[region] = [n + shift for n in nums]
-                            # Add supplement group under its label
-                            new_groups[supp_label] = [e["number"] for e in supp_elems]
-                            result._landmark_groups = new_groups
-                            # Prepend supplement elements
-                            result.elements = supp_elems + result.elements
-                            result.total_count = len(result.elements)
-                            LOGGER.info("Ghost JS supplement: injected %d %s items", shift, supp_label)
-                    except Exception as _e:
-                        LOGGER.warning("Ghost JS supplement failed for %s: %s", domain_key, _e)
-                    break
 
             result.menu_text = paginate_result(result, 0, self.page_limit)
             self.vacuum_cache = result
@@ -1149,7 +1061,7 @@ class GhostInstance:
                 # Check if we have js_click (no ref) or ref (standard click)
                 if js_click and not ref:
                     # Try to resolve to a real CDP uid via a11y snapshot first
-                    # (JS synthetic events fail on React apps like WhatsApp Web)
+                    # (JS synthetic events can fail on framework-managed inputs)
                     resolved_uid = None
                     try:
                         snapshot_text = await self._chrome_transport.take_snapshot()
@@ -1913,20 +1825,18 @@ class GhostInstance:
                 self._touch()
                 return (
                     "Playwright session auth is managed by playwright_manager.py and the "
-                    "~/.codex/playwright_state/linkedin.json state file."
+                    "configured managed-session state file."
                 )
 
             if self.context is None:
                 return "Error: No browser context. Call ghost_vacuum first."
 
             state = await self.context.storage_state()
-            linkedin_cookies = [cookie for cookie in state.get("cookies", []) if "linkedin" in cookie.get("domain", "")]
-            state["cookies"] = linkedin_cookies
             AUTH_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
             if AUTOMATION_AUTH_PATH.parent.exists():
                 AUTOMATION_AUTH_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
             self._touch()
-            return f"Saved {len(linkedin_cookies)} LinkedIn cookies to {AUTH_PATH}"
+            return f"Saved {len(state.get('cookies', []))} browser cookies to {AUTH_PATH}"
 
     async def status(self, active_http_sessions: Optional[int]) -> dict[str, Any]:
         async with self.lock:

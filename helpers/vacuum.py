@@ -80,44 +80,6 @@ ROLE_COL_WIDTH = 12  # width for right-aligned role column
 
 
 # ---------------------------------------------------------------------------
-# JS Supplement Registry
-# ---------------------------------------------------------------------------
-
-_JS_SUPPLEMENTS = {
-    "web.whatsapp.com": {
-        "label": "WhatsApp Chat",
-        "script": """() => {
-            const cells = document.querySelectorAll('div[role="row"]');
-            return JSON.stringify([...cells].slice(0, 30).map((el, i) => ({
-                name: el.querySelector('span[title]')?.title || el.querySelector('span[dir]')?.innerText || el.innerText.split('\\n')[0] || 'Chat ' + i,
-                js_click: `document.querySelectorAll('div[role="row"]')[${i}].click()`
-            })));
-        }"""
-    },
-    "mail.google.com": {
-        "label": "Gmail Email",
-        "script": """() => {
-            const rows = document.querySelectorAll('tr.zA');
-            return [...rows].slice(0, 30).map((el, i) => ({
-                name: (el.querySelector('.yX.xY span')?.getAttribute('name') || 'Sender') + ': ' + (el.querySelector('.y6 span')?.innerText || 'Subject'),
-                js_click: `document.querySelectorAll('tr.zA')[${i}].click()`
-            }));
-        }"""
-    },
-    "linkedin.com": {
-        "label": "LinkedIn Item",
-        "script": """() => {
-            const items = document.querySelectorAll('.scaffold-finite-scroll__content li');
-            return [...items].slice(0, 20).map((el, i) => ({
-                name: el.querySelector('span[aria-hidden="true"]')?.innerText || el.innerText.split('\\n')[0] || 'Item ' + i,
-                js_click: `document.querySelectorAll('.scaffold-finite-scroll__content li')[${i}].click()`
-            }));
-        }"""
-    }
-}
-
-
-# ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 
@@ -153,7 +115,7 @@ def _truncate(name: str, max_len: int = MAX_NAME_LEN) -> str:
     """
     Truncate a name and add ellipsis if too long.
 
-    Also handles compound accessible names (e.g., "Hacker Newsnew | past | comments...")
+    Also handles compound accessible names with repeated navigation labels
     by preferring the first segment before common separators.
     """
     if len(name) <= max_len:
@@ -185,9 +147,9 @@ def _collect_child_text(node: dict, max_depth: int = 3, max_parts: int = 3) -> s
     Recursively collect text from child nodes of an interactive element.
 
     When CDP returns a link with an empty 'name' but the link wraps text nodes
-    (e.g., person names on LinkedIn), this gathers that text. Limited depth
+    (for example, names inside nested links), this gathers that text. Limited depth
     prevents runaway recursion on deep trees. Limited parts prevents compound
-    names like "Hacker Newsnew | past | comments | ask | show | jobs".
+    names that combine several navigation labels.
     """
     if max_depth <= 0:
         return ""
@@ -708,34 +670,6 @@ def vacuum_from_snapshot_text(snapshot_text: str, url: str = "", title: str = ""
     )
 
 
-def _apply_js_supplements(
-    url: str,
-    elements: list[VacuumElement],
-    elem_dicts: list[dict],
-) -> None:
-    """
-    Check if the current URL has a JS supplement registry entry.
-    If so, run the supplement script and inject results as additional elements.
-
-    Mutates elem_dicts in place, appending new elements with js_click set.
-    """
-    # Find matching supplement by checking if URL contains the registry key
-    registry_entry = None
-    for domain_key, entry in _JS_SUPPLEMENTS.items():
-        if domain_key in url:
-            registry_entry = entry
-            break
-
-    if registry_entry is None:
-        return
-
-    # Note: This function is called from vacuum.py context.
-    # In production use, the page object would be passed to execute the script.
-    # For now, this is a placeholder that shows the structure.
-    # The actual script execution happens in the runtime host when vacuum is called.
-    pass
-
-
 def _build_result(
     tree: dict,
     url: str,
@@ -775,9 +709,6 @@ def _build_result(
         }
         for e in elements
     ]
-
-    # Apply JS supplements if URL matches a registry entry
-    _apply_js_supplements(url, elements, elem_dicts)
 
     has_more = (limit > 0) and (offset + limit < total)
 
