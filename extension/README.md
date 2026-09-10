@@ -54,7 +54,7 @@ Click the Ghost Bridge icon in Chrome → click **Connect**.
 The badge turns green and the server logs:
 ```
 [bridge] Extension connected
-[bridge] Extension v1.0.0 ready
+[bridge] Extension v0.3.2 ready
 ```
 
 ### 5. Test

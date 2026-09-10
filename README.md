@@ -2,6 +2,15 @@
 
 Ghost Browser — AI browser automation via a Chrome extension and numbered accessibility menus.
 
+Current release: **0.3.2**
+
+## What's new in 0.3.2
+
+- `ghost_pdf_read` returns page-indexed text from PDFs open in live Chrome.
+- `auto` mode uses embedded PDF text first and OCR only for image-only pages.
+- PDF bytes stay local through a bounded, one-time loopback transfer; downloads are limited to 50 MB and 300 pages.
+- The installer uses Ghost's isolated `.venv`, and Python bridge files now live outside the unpacked Chrome extension directory.
+
 <img width="607" height="453" alt="Screenshot at Jun 15 22-08-42" src="https://github.com/user-attachments/assets/f9481c3d-74a7-4049-ae13-20f83b72d59f" />
 
 ## Install

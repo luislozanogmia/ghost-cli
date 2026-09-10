@@ -87,7 +87,7 @@ class ToolProcessClient:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "ghost-cli", "version": "0.2.0"},
+                "clientInfo": {"name": "ghost-cli", "version": "0.3.2"},
             },
         )
         await self.notify("notifications/initialized", {})
