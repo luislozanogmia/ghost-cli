@@ -1,0 +1,35 @@
+name: ghost
+version: 0.4.0
+description: "Control a signed-in Chrome window or the Hermes Desktop browser through authenticated local transports."
+author: Luis Lozano
+kind: standalone
+provides_tools:
+  - ghost_status
+  - ghost_tab_list
+  - ghost_tab_open
+  - ghost_tab_switch
+  - ghost_tab_close
+  - ghost_navigate
+  - ghost_vacuum
+  - ghost_read
+  - ghost_pdf_read
+  - ghost_click
+  - ghost_fill
+  - ghost_key
+  - ghost_eval
+  - ghost_screenshot
+  - ghost_scroll
+  - ghost_wait
+config_schema:
+  backend:
+    type: string
+    required: false
+    description: "Browser target: auto, chrome, or hermes. Defaults to auto."
+  chrome_port:
+    type: integer
+    required: false
+    description: "Authenticated Chrome bridge HTTP port. Defaults to 9378."
+  hermes_port:
+    type: integer
+    required: false
+    description: "Hermes Desktop browser loopback fallback port. Defaults to 9400."

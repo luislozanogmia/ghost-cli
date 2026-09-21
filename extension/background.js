@@ -1,9 +1,8 @@
 /**
  * Ghost Bridge — Background Service Worker
  *
- * Connects to the ghost-cli daemon over WebSocket.
+ * Connects to the Ghost bridge over an authenticated WebSocket.
  * Receives commands, executes them via Chrome APIs, returns results.
- * No CDP. No debugging dialogs. Install once, grant once.
  */
 
 const DEFAULT_PORT = 9377; // GHOST on a phone keypad
@@ -15,13 +14,14 @@ let reconnectDelay = RECONNECT_DELAY;
 let reconnectTimer = null;
 let connected = false;
 let port = DEFAULT_PORT;
+let token = "";
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 function getStatus() {
-  return { connected, port, version: chrome.runtime.getManifest().version };
+  return { connected, paired: Boolean(token), port, version: chrome.runtime.getManifest().version };
 }
 
 function setBadge(text, color) {
@@ -34,6 +34,10 @@ function setBadge(text, color) {
 // ---------------------------------------------------------------------------
 
 function connect() {
+  if (!token) {
+    setBadge("PAIR", "#f59e0b");
+    return;
+  }
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
 
   try {
@@ -44,18 +48,20 @@ function connect() {
   }
 
   ws.onopen = () => {
-    connected = true;
-    reconnectDelay = RECONNECT_DELAY;
-    setBadge("ON", "#22c55e");
-    console.log("[ghost-bridge] connected to daemon");
-
-    // Announce ourselves
-    ws.send(JSON.stringify({ type: "hello", source: "ghost-bridge", version: chrome.runtime.getManifest().version }));
+    ws.send(JSON.stringify({ type: "auth", token }));
   };
 
   ws.onmessage = async (event) => {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
+    if (msg.type === "authenticated") {
+      connected = true;
+      reconnectDelay = RECONNECT_DELAY;
+      setBadge("ON", "#22c55e");
+      ws.send(JSON.stringify({ type: "hello", source: "ghost-bridge", version: chrome.runtime.getManifest().version }));
+      return;
+    }
+    if (!connected) return;
     if (!msg.id || !msg.command) return;
 
     try {
@@ -68,7 +74,7 @@ function connect() {
 
   ws.onclose = () => {
     connected = false;
-    setBadge("OFF", "#ef4444");
+    setBadge(token ? "OFF" : "PAIR", token ? "#ef4444" : "#f59e0b");
     console.log("[ghost-bridge] disconnected");
     scheduleReconnect();
   };
@@ -760,11 +766,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === "connect") {
     port = msg.port || DEFAULT_PORT;
-    chrome.storage.local.set({ port });
-    disconnect();
-    connect();
-    sendResponse({ ok: true });
-    return false;
+    token = (msg.token || "").trim();
+    if (!token) {
+      sendResponse({ ok: false, error: "Pairing token is required" });
+      return false;
+    }
+    chrome.storage.local.set({ port, token }, () => {
+      disconnect();
+      connect();
+      sendResponse({ ok: true });
+    });
+    return true;
   }
   if (msg.type === "disconnect") {
     disconnect();
@@ -778,9 +790,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Startup
 // ---------------------------------------------------------------------------
 
-chrome.storage.local.get(["port"], (data) => {
+chrome.storage.local.get(["port", "token"], (data) => {
   if (data.port) port = data.port;
-  setBadge("OFF", "#ef4444");
+  if (data.token) token = data.token;
+  setBadge(token ? "OFF" : "PAIR", token ? "#ef4444" : "#f59e0b");
   connect();
 });
 

@@ -83,6 +83,10 @@
     width: 60px;
   }
   .port-row input:focus { border-color: #6366f1; }
+  .pair-row { margin-bottom: 12px; }
+  .pair-row label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+  .pair-row input { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; }
+  .error { min-height: 16px; color: #b91c1c; font-size: 11px; margin-bottom: 4px; }
   button {
     width: 100%;
     padding: 8px 12px;
@@ -129,6 +133,12 @@
     <label>Port:</label>
     <input type="number" id="port" value="9377" min="1024" max="65535">
   </div>
+
+  <div class="pair-row">
+    <label for="token">Pairing token</label>
+    <input type="password" id="token" autocomplete="off" placeholder="Paste the local bridge token">
+  </div>
+  <div class="error" id="error"></div>
 
   <button class="btn-connect" id="connectBtn">Connect</button>
   <button class="btn-disconnect" id="disconnectBtn">Disconnect</button>

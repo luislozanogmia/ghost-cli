@@ -39,6 +39,7 @@ class TestInAppBrowserTransportConnection(unittest.TestCase):
             socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
             tcp_host="127.0.0.1",
             tcp_port=19999,
+            token="connection-test-token",
         )
         with self.assertRaises(InAppBrowserConnectionError):
             transport.call("status")
@@ -181,6 +182,10 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
         result = self.transport.key(text="search query")
         self.assertEqual(result["typed"], "search query")
 
+    def test_eval(self):
+        result = self.transport.eval("() => document.title")
+        self.assertEqual(result["value"], "mock-result")
+
     # -- Tabs --
 
     def test_tab_list(self):
@@ -281,12 +286,13 @@ class TestInAppBrowserTransportBounds(unittest.TestCase):
         cls._tmpdir = tempfile.mkdtemp(prefix="ghost-in-app-browser-bounds-")
         cls._sock_path = Path(cls._tmpdir) / "ghost-bridge.sock"
 
-        cls.server = MockInAppBrowserServer(cls._sock_path, token=None)
+        cls._token = "bounds-secret-token"
+        cls.server = MockInAppBrowserServer(cls._sock_path, token=cls._token)
         cls.server.start()
 
         cls.transport = InAppBrowserTransport(
             socket_path=cls._sock_path,
-            token=None,
+            token=cls._token,
             timeout=5,
         )
 
@@ -304,10 +310,10 @@ class TestInAppBrowserTransportBounds(unittest.TestCase):
         # The transport should have sent a capped value
         self.assertIn("text", result)
 
-    def test_no_auth_when_token_is_none(self):
-        """Server with no token accepts requests without token."""
-        result = self.transport.status()
-        self.assertTrue(result.get("connected"))
+    def test_missing_auth_is_rejected_before_connect(self):
+        transport = InAppBrowserTransport(socket_path=self._sock_path, token="", timeout=5)
+        with self.assertRaises(InAppBrowserAuthError):
+            transport.call("status")
 
 
 if __name__ == "__main__":

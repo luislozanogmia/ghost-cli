@@ -1,8 +1,7 @@
-"""
-Ghost Bridge Server — WebSocket server that the Chrome extension connects to.
+"""Ghost Bridge Server for the Chrome extension.
 
-Replaces CDP transport entirely. Agents call ghost-cli → daemon → this server
-→ Chrome extension → Chrome APIs. No CDP. No debugging dialogs.
+Agents call the authenticated loopback HTTP API, which forwards commands to an
+authenticated extension connection and returns bounded JSON results.
 
 Usage:
     python3 bridge_server.py [--port 9377]
@@ -17,6 +16,7 @@ import asyncio
 import json
 import argparse
 import hashlib
+import hmac
 import secrets
 import signal
 import sys
@@ -34,6 +34,7 @@ from pdf_reader import (
     PdfReadError,
     extract_pdf,
 )
+from bridge_auth import BridgeAuthError, load_bridge_token, token_path
 
 try:
     import websockets
@@ -50,8 +51,9 @@ except ImportError:
 
 
 class BridgeServer:
-    def __init__(self, port=9377):
+    def __init__(self, port=9377, token=None):
         self.port = port
+        self.token = token or load_bridge_token(create=True)
         self.extension_ws = None
         self.pending = {}  # id -> Future
         self.pending_pdf_uploads = {}  # one-time token -> Future[bytes]
@@ -61,10 +63,37 @@ class BridgeServer:
     # WebSocket handler — Chrome extension connects here
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _origin(websocket):
+        request = getattr(websocket, "request", None)
+        headers = getattr(request, "headers", None)
+        if headers is None:
+            headers = getattr(websocket, "request_headers", {})
+        return headers.get("Origin") if headers else None
+
     async def ws_handler(self, websocket):
-        print(f"[bridge] Extension connected from {websocket.remote_address}")
+        origin = self._origin(websocket)
+        if not origin or not origin.startswith("chrome-extension://"):
+            await websocket.close(code=4003, reason="unauthorized origin")
+            return
+        try:
+            raw_auth = await asyncio.wait_for(websocket.recv(), timeout=5)
+            auth = json.loads(raw_auth)
+        except (asyncio.TimeoutError, json.JSONDecodeError, TypeError):
+            await websocket.close(code=4003, reason="authentication required")
+            return
+        supplied = auth.get("token", "") if auth.get("type") == "auth" else ""
+        if not isinstance(supplied, str) or not hmac.compare_digest(supplied, self.token):
+            await websocket.close(code=4003, reason="authentication failed")
+            return
+
+        print("[bridge] Authenticated extension connected")
+        previous = self.extension_ws
+        if previous is not None and previous is not websocket:
+            await previous.close(code=4000, reason="replaced by a newer extension connection")
         self.extension_ws = websocket
         self.connected = True
+        await websocket.send(json.dumps({"type": "authenticated"}))
 
         try:
             async for raw in websocket:
@@ -92,6 +121,8 @@ class BridgeServer:
             pass
         finally:
             print("[bridge] Extension disconnected")
+            if self.extension_ws is not websocket:
+                return
             self.extension_ws = None
             self.connected = False
             # Fail all pending requests
@@ -131,7 +162,22 @@ class BridgeServer:
     # HTTP API — agents POST commands here
     # ------------------------------------------------------------------
 
+    def _authorized(self, request):
+        header = request.headers.get("Authorization", "")
+        prefix = "Bearer "
+        supplied = header[len(prefix):] if header.startswith(prefix) else ""
+        return bool(supplied) and hmac.compare_digest(supplied, self.token)
+
+    def _reject_unauthorized(self):
+        return web.json_response(
+            {"error": "UNAUTHORIZED"},
+            status=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     async def handle_call(self, request):
+        if not self._authorized(request):
+            return self._reject_unauthorized()
         try:
             body = await request.json()
         except Exception:
@@ -143,6 +189,14 @@ class BridgeServer:
 
         if not command:
             return web.json_response({"error": "Missing 'command'"}, status=400)
+        if not isinstance(args, dict):
+            return web.json_response({"error": "'args' must be an object"}, status=400)
+        if isinstance(timeout, bool):
+            return web.json_response({"error": "'timeout' must be a number"}, status=400)
+        try:
+            timeout = max(1, min(float(timeout), 300))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "'timeout' must be a number"}, status=400)
 
         try:
             if command == "ghost_pdf_read":
@@ -265,6 +319,8 @@ class BridgeServer:
                     upload_future.exception()
 
     async def handle_status(self, request):
+        if not self._authorized(request):
+            return self._reject_unauthorized()
         return web.json_response({
             "connected": self.connected,
             "port": self.port,
@@ -301,6 +357,7 @@ class BridgeServer:
 
         print(f"[bridge] WebSocket server on ws://127.0.0.1:{self.port}/ghost-bridge")
         print(f"[bridge] HTTP API on http://127.0.0.1:{self.port + 1}/call")
+        print(f"[bridge] Pair the extension with the token stored at {token_path()}")
         print(f"[bridge] Waiting for Chrome extension...")
 
         # Wait forever
@@ -330,8 +387,11 @@ def main():
     parser.add_argument("--port", type=int, default=9377, help="WebSocket port (HTTP = port+1)")
     args = parser.parse_args()
 
-    server = BridgeServer(port=args.port)
-    asyncio.run(server.run())
+    try:
+        server = BridgeServer(port=args.port)
+        asyncio.run(server.run())
+    except BridgeAuthError as exc:
+        raise SystemExit(f"Bridge authentication error: {exc}") from exc
 
 
 if __name__ == "__main__":

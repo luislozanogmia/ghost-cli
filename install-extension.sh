@@ -55,6 +55,7 @@ BRIDGE_PID=$!
 echo "$BRIDGE_PID" > "$PID_FILE"
 sleep 1
 echo -e "${GREEN}✓ Bridge server running (PID ${BRIDGE_PID})${NC}"
+PAIRING_TOKEN=$("$PYTHON_BIN" "$SCRIPT_DIR/ghost_cli.py" bridge-token)
 
 # Step 2: Open the visual install guide
 echo -e "${CYAN}Opening install guide in Chrome...${NC}"
@@ -63,19 +64,20 @@ open "$GUIDE_URL" 2>/dev/null || xdg-open "$GUIDE_URL" 2>/dev/null || echo -e "O
 
 echo ""
 echo -e "${BOLD}Follow the steps in the browser tab that just opened.${NC}"
-echo -e "The page will show ${GREEN}✅ Ghost Bridge is live!${NC} when everything is connected."
+echo -e "Paste this pairing token into the extension popup:"
+echo -e "${CYAN}${PAIRING_TOKEN}${NC}"
 echo ""
 echo -e "${CYAN}Waiting for connection...${NC}"
 
 # Step 3: Poll until connected
 for i in $(seq 1 60); do
-    STATUS=$(curl -s http://127.0.0.1:9378/status 2>/dev/null || echo '{}')
+    STATUS=$(curl -s -H "Authorization: Bearer ${PAIRING_TOKEN}" http://127.0.0.1:9378/status 2>/dev/null || echo '{}')
     if echo "$STATUS" | "$PYTHON_BIN" -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('connected') else 1)" 2>/dev/null; then
         echo ""
         echo -e "${GREEN}${BOLD}✅ Ghost Browser Extension is live!${NC}"
         echo ""
         echo -e "  Endpoint: ${CYAN}http://127.0.0.1:9378${NC}"
-        echo -e "  Try it:   ${CYAN}curl -s http://127.0.0.1:9378/status${NC}"
+        echo -e "  Try it:   ${CYAN}./ghost-cli status --backend chrome${NC}"
         echo ""
         exit 0
     fi
@@ -85,5 +87,5 @@ done
 echo ""
 echo -e "${YELLOW}Timed out waiting for connection.${NC}"
 echo -e "Follow the steps in the guide tab, then verify with:"
-echo -e "  ${CYAN}curl -s http://127.0.0.1:9378/status${NC}"
+echo -e "  ${CYAN}./ghost-cli status --backend chrome${NC}"
 echo ""

@@ -3,7 +3,7 @@ InAppBrowserTransport — Ghost CLI adapter for an in-app browser.
 
 Communicates with In-App Browser over a local Unix socket (macOS/Linux) or
 authenticated loopback TCP (Windows fallback), using a JSON-RPC-style
-request/response protocol. No CDP. No Chrome debugging. No second browser.
+request/response protocol. It controls the browser pane already owned by the app.
 
 The host Electron app already has a `WebContentsView`-based browser
 (`browser.cjs`). This transport sends commands that map 1:1 onto the host
@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import stat
 import struct
 import tempfile
 import time
@@ -146,6 +147,20 @@ def _new_request_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _read_private_token(path: Path) -> str:
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise InAppBrowserAuthError()
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise InAppBrowserAuthError()
+    if info.st_mode & 0o077:
+        raise InAppBrowserAuthError()
+    token = path.read_text(encoding="utf-8").strip()
+    if not token:
+        raise InAppBrowserAuthError()
+    return token
+
+
 # ---------------------------------------------------------------------------
 # Transport
 # ---------------------------------------------------------------------------
@@ -173,7 +188,7 @@ class InAppBrowserTransport:
         if self.token is None:
             self.token = os.environ.get("GHOST_IN_APP_BROWSER_TOKEN")
         if self.token is None and DEFAULT_TOKEN_PATH.exists():
-            self.token = DEFAULT_TOKEN_PATH.read_text().strip()
+            self.token = _read_private_token(DEFAULT_TOKEN_PATH)
 
     # ------------------------------------------------------------------
     # Connection
@@ -183,6 +198,13 @@ class InAppBrowserTransport:
         """Open a connection to In-App Browser. Prefer Unix socket, fall back to TCP."""
         # Unix socket
         if self.socket_path and self.socket_path.exists():
+            info = self.socket_path.lstat()
+            if not stat.S_ISSOCK(info.st_mode):
+                raise InAppBrowserConnectionError("Configured Unix path is not a socket")
+            if hasattr(os, "getuid") and info.st_uid != os.getuid():
+                raise InAppBrowserConnectionError("Unix socket is not owned by the current user")
+            if info.st_mode & 0o077:
+                raise InAppBrowserConnectionError("Unix socket permissions must be 0600")
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
                 sock.settimeout(5)
@@ -219,6 +241,8 @@ class InAppBrowserTransport:
     ) -> dict:
         """Send a command and wait for the correlated response."""
         timeout = timeout or self.timeout
+        if not self.token:
+            raise InAppBrowserAuthError()
         request_id = _new_request_id()
 
         request = {
@@ -273,7 +297,7 @@ class InAppBrowserTransport:
         """Send a command to the in-app browser and return the result.
 
         Commands map to the host app's browser.cjs IPC actions:
-            status, navigate, read, vacuum, click, fill, key,
+            status, navigate, read, vacuum, click, fill, key, eval,
             tab_list, tab_open, tab_switch, tab_close,
             back, forward, reload, stop, screenshot, scroll, wait
         """
@@ -359,6 +383,9 @@ class InAppBrowserTransport:
         if text:
             args["text"] = text
         return self.call("key", args)
+
+    def eval(self, script: str) -> dict:
+        return self.call("eval", {"script": script})
 
     def tab_list(self) -> dict:
         return self.call("tab_list")

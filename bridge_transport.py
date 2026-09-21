@@ -1,33 +1,33 @@
-"""
-Ghost Bridge Transport — HTTP client that talks to the bridge_server,
-which forwards commands to the Chrome extension.
-
-Drop-in replacement for chrome_transport.py. Same interface, no CDP.
-
-Usage in ghost_daemon.py:
-    from bridge_transport import BridgeTransport
-    transport = BridgeTransport(port=9378)  # HTTP port = WS port + 1
-    result = await transport.call("ghost_tab_list", {})
-"""
+"""Authenticated HTTP client for Ghost's Chrome extension bridge."""
 
 import json
 import urllib.request
 import urllib.error
 
+from bridge_auth import load_bridge_token
+
 
 class BridgeTransport:
     """Synchronous HTTP client for the Ghost Bridge server."""
 
-    def __init__(self, port=9378, timeout=60):
+    def __init__(self, port=9378, timeout=60, token=None):
         self.base_url = f"http://127.0.0.1:{port}"
         self.timeout = timeout
+        self.token = token or load_bridge_token()
         self._connected = False
+
+    def _headers(self, *, json_body=False):
+        headers = {"Authorization": f"Bearer {self.token}"}
+        if json_body:
+            headers["Content-Type"] = "application/json"
+        return headers
 
     def status(self):
         """Check bridge server and extension status."""
         try:
             req = urllib.request.Request(
                 f"{self.base_url}/status",
+                headers=self._headers(),
                 method="GET",
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -53,7 +53,7 @@ class BridgeTransport:
         req = urllib.request.Request(
             f"{self.base_url}/call",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers=self._headers(json_body=True),
             method="POST",
         )
 

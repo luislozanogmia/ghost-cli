@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_VERSION = "0.3.2"
+EXPECTED_VERSION = "0.4.0"
 
 
 class VersionTests(unittest.TestCase):
@@ -28,9 +28,18 @@ class VersionTests(unittest.TestCase):
         source = (REPO_ROOT / "extension" / "background.js").read_text()
         self.assertIn("version: chrome.runtime.getManifest().version", source)
 
-    def test_mcp_client_version(self):
-        source = (REPO_ROOT / "tool_stdio_client.py").read_text()
-        self.assertIn(f'"clientInfo": {{"name": "ghost-cli", "version": "{EXPECTED_VERSION}"}}', source)
+    def test_chrome_extension_authenticates_before_marking_connected(self):
+        source = (REPO_ROOT / "extension" / "background.js").read_text()
+        auth_send = source.index('type: "auth", token')
+        authenticated = source.index('msg.type === "authenticated"')
+        connected = source.index("connected = true", authenticated)
+        self.assertLess(auth_send, authenticated)
+        self.assertLess(authenticated, connected)
+        self.assertNotIn("ghost-bridge?", source)
+
+    def test_hermes_plugin_version(self):
+        manifest = (REPO_ROOT / "hermes-plugin" / "plugin.yaml").read_text()
+        self.assertIn(f"version: {EXPECTED_VERSION}", manifest)
 
 
 if __name__ == "__main__":
