@@ -176,15 +176,14 @@ class BridgeServer:
             pass
         finally:
             print("[bridge] Extension disconnected")
-            if self.extension_ws is not websocket:
-                return
-            self.extension_ws = None
-            self.connected = False
-            # Fail all pending requests
-            for future in self.pending.values():
-                if not future.done():
-                    future.set_result({"error": "Extension disconnected"})
-            self.pending.clear()
+            if self.extension_ws is websocket:
+                self.extension_ws = None
+                self.connected = False
+                # Fail all pending requests
+                for future in self.pending.values():
+                    if not future.done():
+                        future.set_result({"error": "Extension disconnected"})
+                self.pending.clear()
 
     # ------------------------------------------------------------------
     # Send a command to the extension and wait for response

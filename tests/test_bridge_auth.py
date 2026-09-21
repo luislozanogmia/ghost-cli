@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import secrets
 import time
+import ast
 from pathlib import Path
 from unittest import mock
 
@@ -266,6 +267,19 @@ class BridgeClientTrustTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", return_value=FakeResponse()):
             with self.assertRaisesRegex(BridgeError, "UNTRUSTED_BRIDGE"):
                 transport.call("ghost_read", {})
+
+    def test_websocket_cleanup_has_no_return_in_finally(self):
+        source = (Path(__file__).resolve().parent.parent / "bridge_server.py").read_text()
+        tree = ast.parse(source)
+        returns_in_finally = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            for statement in node.finalbody:
+                returns_in_finally.extend(
+                    child for child in ast.walk(statement) if isinstance(child, ast.Return)
+                )
+        self.assertEqual(returns_in_finally, [])
 
     def test_rejects_expired_replayed_challenge(self):
         client_nonce = "d" * 32
