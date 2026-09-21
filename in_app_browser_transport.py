@@ -1,9 +1,8 @@
 """
 InAppBrowserTransport — Ghost CLI adapter for an in-app browser.
 
-Communicates with In-App Browser over a local Unix socket (macOS/Linux) or
-authenticated loopback TCP (Windows fallback), using a JSON-RPC-style
-request/response protocol. No CDP. No Chrome debugging. No second browser.
+Communicates with In-App Browser over a private local Unix socket, using a JSON-RPC-style
+request/response protocol. It controls the browser pane already owned by the app.
 
 The host Electron app already has a `WebContentsView`-based browser
 (`browser.cjs`). This transport sends commands that map 1:1 onto the host
@@ -14,17 +13,13 @@ Security model:
   - Every request carries a unique `id` and an auth `token`
   - Every response echoes the `id` for correlation
   - Page text/content is untrusted and bounded
-  - Local-only: socket path or 127.0.0.1 loopback
+  - Local-only: private Unix socket; unauthenticated peer discovery over TCP is not used
 
 Usage:
     from in_app_browser_transport import InAppBrowserTransport, InAppBrowserTransportError
 
     transport = InAppBrowserTransport()              # defaults
-    transport = InAppBrowserTransport(               # explicit
-        socket_path="/tmp/ghost-in-app-browser.sock",
-        token="secret",
-        timeout=30,
-    )
+    transport = InAppBrowserTransport(token="secret", timeout=30)
 
     status = transport.status()
     result = transport.call("navigate", {"url": "https://example.com"})
@@ -37,7 +32,9 @@ from __future__ import annotations
 import json
 import os
 import socket
+import stat
 import struct
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -48,14 +45,13 @@ from typing import Any, Optional
 # Constants
 # ---------------------------------------------------------------------------
 
+DEFAULT_RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", tempfile.gettempdir())) / "ghost"
 DEFAULT_SOCKET_PATH = Path(
-    os.environ.get(
-        "GHOST_IN_APP_BROWSER_SOCKET",
-        os.path.expanduser("~/.in-app-browser/ghost-bridge.sock"),
-    )
+    os.environ.get("GHOST_IN_APP_BROWSER_SOCKET", DEFAULT_RUNTIME_DIR / "in-app-browser.sock")
 )
-DEFAULT_TCP_HOST = "127.0.0.1"
-DEFAULT_TCP_PORT = int(os.environ.get("GHOST_IN_APP_BROWSER_PORT", "9400"))
+DEFAULT_TOKEN_PATH = Path(
+    os.environ.get("GHOST_IN_APP_BROWSER_TOKEN_FILE", DEFAULT_RUNTIME_DIR / "in-app-browser.token")
+)
 DEFAULT_TIMEOUT = 30  # seconds
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MB hard cap on any single response
 MAX_PAGE_TEXT_CHARS = 100_000  # bound on returned page text
@@ -148,6 +144,51 @@ def _new_request_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+def _sanitize_action_result(command: str, args: dict, result: Any) -> Any:
+    if command not in {"fill", "key"} or not isinstance(result, dict):
+        return result
+    clean = dict(result)
+    for key in ("value", "text", "input", "password", "token"):
+        clean.pop(key, None)
+    if command == "key" and "text" in args:
+        clean["typed"] = True
+        clean["characters"] = len(str(args["text"]))
+    elif isinstance(clean.get("typed"), str):
+        clean["characters"] = len(clean["typed"])
+        clean["typed"] = True
+    return clean
+
+
+def _read_private_token(path: Path) -> str:
+    try:
+        parent = path.parent.lstat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_mode & 0o022:
+            raise InAppBrowserAuthError()
+        if hasattr(os, "getuid") and parent.st_uid != os.getuid():
+            raise InAppBrowserAuthError()
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+    except (OSError, InAppBrowserAuthError) as exc:
+        raise InAppBrowserAuthError() from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise InAppBrowserAuthError()
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise InAppBrowserAuthError()
+        if info.st_mode & 0o077:
+            raise InAppBrowserAuthError()
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            fd = -1
+            token = handle.read().strip()
+        if len(token.encode()) < 32:
+            raise InAppBrowserAuthError()
+        return token
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 # ---------------------------------------------------------------------------
 # Transport
 # ---------------------------------------------------------------------------
@@ -156,14 +197,12 @@ def _new_request_id() -> str:
 class InAppBrowserTransport:
     """Client adapter for the host app's in-app browser.
 
-    Connects over a Unix socket (preferred) or authenticated loopback TCP.
+    Connects over an owner-only Unix socket.
     Each call sends a JSON-RPC-style request and waits for the correlated
     response.
     """
 
     socket_path: Optional[Path] = None
-    tcp_host: str = DEFAULT_TCP_HOST
-    tcp_port: int = DEFAULT_TCP_PORT
     token: Optional[str] = field(default=None, repr=False)
     timeout: float = DEFAULT_TIMEOUT
     _last_status: Optional[dict] = field(default=None, repr=False)
@@ -175,40 +214,45 @@ class InAppBrowserTransport:
         if self.token is None:
             self.token = os.environ.get("GHOST_IN_APP_BROWSER_TOKEN")
         if self.token is None:
-            token_file = Path(os.path.expanduser("~/.in-app-browser/ghost-bridge.token"))
-            if token_file.exists():
-                self.token = token_file.read_text().strip()
+            try:
+                self.token = _read_private_token(DEFAULT_TOKEN_PATH)
+            except InAppBrowserAuthError:
+                pass
+        if self.token is not None and len(self.token.encode()) < 32:
+            raise InAppBrowserAuthError()
 
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
 
     def _connect(self) -> socket.socket:
-        """Open a connection to In-App Browser. Prefer Unix socket, fall back to TCP."""
-        # Unix socket
-        if self.socket_path and self.socket_path.exists():
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                sock.settimeout(5)
-                sock.connect(str(self.socket_path))
-                return sock
-            except (OSError, ConnectionError) as exc:
-                sock.close()
-                raise InAppBrowserConnectionError(
-                    f"Unix socket exists but connection failed: {exc}"
-                ) from exc
-
-        # TCP fallback (Windows or explicit config)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        """Open the owner-only Unix socket exposed by Hermes Desktop."""
+        if not self.socket_path:
+            raise InAppBrowserConnectionError("Hermes Desktop Unix socket path is not configured")
+        try:
+            parent = self.socket_path.parent.lstat()
+            info = self.socket_path.lstat()
+        except OSError as exc:
+            raise InAppBrowserConnectionError("Hermes Desktop private Unix socket is unavailable") from exc
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_mode & 0o022:
+            raise InAppBrowserConnectionError("Unix socket directory must not be group/world writable")
+        if hasattr(os, "getuid") and parent.st_uid != os.getuid():
+            raise InAppBrowserConnectionError("Unix socket directory is not owned by the current user")
+        if not stat.S_ISSOCK(info.st_mode):
+            raise InAppBrowserConnectionError("Configured Unix path is not a socket")
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            raise InAppBrowserConnectionError("Unix socket is not owned by the current user")
+        if info.st_mode & 0o077:
+            raise InAppBrowserConnectionError("Unix socket permissions must be 0600")
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             sock.settimeout(5)
-            sock.connect((self.tcp_host, self.tcp_port))
+            sock.connect(str(self.socket_path))
             return sock
         except (OSError, ConnectionError) as exc:
             sock.close()
             raise InAppBrowserConnectionError(
-                f"Cannot connect to In-App Browser at {self.tcp_host}:{self.tcp_port}. "
-                f"Is In-App Browser running with the ghost-bridge endpoint enabled? ({exc})"
+                f"Unix socket exists but connection failed: {exc}"
             ) from exc
 
     # ------------------------------------------------------------------
@@ -223,6 +267,8 @@ class InAppBrowserTransport:
     ) -> dict:
         """Send a command and wait for the correlated response."""
         timeout = timeout or self.timeout
+        if not self.token:
+            raise InAppBrowserAuthError()
         request_id = _new_request_id()
 
         request = {
@@ -277,11 +323,13 @@ class InAppBrowserTransport:
         """Send a command to the in-app browser and return the result.
 
         Commands map to the host app's browser.cjs IPC actions:
-            status, navigate, read, vacuum, click, fill, key,
+            status, navigate, read, vacuum, click, fill, key, eval,
             tab_list, tab_open, tab_switch, tab_close,
             back, forward, reload, stop, screenshot, scroll, wait
         """
-        result = self._send_request(command, args, timeout)
+        call_args = args or {}
+        result = self._send_request(command, call_args, timeout)
+        result = _sanitize_action_result(command, call_args, result)
 
         # Bound text fields to prevent unbounded memory usage
         if isinstance(result, dict):
@@ -363,6 +411,9 @@ class InAppBrowserTransport:
         if text:
             args["text"] = text
         return self.call("key", args)
+
+    def eval(self, script: str) -> dict:
+        return self.call("eval", {"script": script})
 
     def tab_list(self) -> dict:
         return self.call("tab_list")

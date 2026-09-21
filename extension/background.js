@@ -1,9 +1,8 @@
 /**
  * Ghost Bridge — Background Service Worker
  *
- * Connects to the ghost-cli daemon over WebSocket.
+ * Connects to the Ghost bridge over an authenticated WebSocket.
  * Receives commands, executes them via Chrome APIs, returns results.
- * No CDP. No debugging dialogs. Install once, grant once.
  */
 
 const DEFAULT_PORT = 9377; // GHOST on a phone keypad
@@ -15,13 +14,43 @@ let reconnectDelay = RECONNECT_DELAY;
 let reconnectTimer = null;
 let connected = false;
 let port = DEFAULT_PORT;
+let token = "";
+let intentionallyDisconnected = false;
+
+function randomHex(bytes = 32) {
+  const data = new Uint8Array(bytes);
+  crypto.getRandomValues(data);
+  return [...data].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacHex(secret, message) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  return [...new Uint8Array(signature)].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+function constantTimeEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
+  let different = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    different |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return different === 0;
+}
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 function getStatus() {
-  return { connected, port, version: chrome.runtime.getManifest().version };
+  return { connected, paired: Boolean(token), port, version: chrome.runtime.getManifest().version };
 }
 
 function setBadge(text, color) {
@@ -34,58 +63,107 @@ function setBadge(text, color) {
 // ---------------------------------------------------------------------------
 
 function connect() {
+  if (!token) {
+    setBadge("PAIR", "#f59e0b");
+    return;
+  }
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
 
+  intentionallyDisconnected = false;
+  let socket;
+  let authState = null;
   try {
-    ws = new WebSocket(`ws://127.0.0.1:${port}/ghost-bridge`);
+    socket = new WebSocket(`ws://127.0.0.1:${port}/ghost-bridge`);
+    ws = socket;
   } catch (err) {
     scheduleReconnect();
     return;
   }
 
-  ws.onopen = () => {
-    connected = true;
-    reconnectDelay = RECONNECT_DELAY;
-    setBadge("ON", "#22c55e");
-    console.log("[ghost-bridge] connected to daemon");
-
-    // Announce ourselves
-    ws.send(JSON.stringify({ type: "hello", source: "ghost-bridge", version: chrome.runtime.getManifest().version }));
+  socket.onopen = () => {
+    const clientNonce = randomHex();
+    authState = { clientNonce, serverNonce: "", serverVerified: false };
+    socket.send(JSON.stringify({ type: "auth_init", client_nonce: clientNonce }));
   };
 
-  ws.onmessage = async (event) => {
+  socket.onmessage = async (event) => {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
+    if (msg.type === "auth_challenge" && authState && !connected) {
+      const serverNonce = typeof msg.server_nonce === "string" ? msg.server_nonce : "";
+      if (!/^[0-9a-f]{64}$/.test(serverNonce)) {
+        socket.close(4003, "invalid server challenge");
+        return;
+      }
+      const expected = await hmacHex(
+        token,
+        `ghost-ws-server-v1:${authState.clientNonce}:${serverNonce}`,
+      );
+      if (!constantTimeEqual(msg.server_proof, expected)) {
+        socket.close(4003, "untrusted bridge server");
+        return;
+      }
+      authState.serverNonce = serverNonce;
+      authState.serverVerified = true;
+      const clientProof = await hmacHex(
+        token,
+        `ghost-ws-client-v1:${authState.clientNonce}:${serverNonce}`,
+      );
+      socket.send(JSON.stringify({ type: "auth_response", client_proof: clientProof }));
+      return;
+    }
+    if (msg.type === "authenticated") {
+      if (!authState?.serverVerified) {
+        socket.close(4003, "bridge server was not authenticated");
+        return;
+      }
+      connected = true;
+      reconnectDelay = RECONNECT_DELAY;
+      setBadge("ON", "#22c55e");
+      socket.send(JSON.stringify({ type: "hello", source: "ghost-bridge", version: chrome.runtime.getManifest().version }));
+      return;
+    }
+    if (!connected) return;
     if (!msg.id || !msg.command) return;
 
     try {
       const result = await handleCommand(msg.command, msg.args || {});
-      ws.send(JSON.stringify({ id: msg.id, result }));
+      socket.send(JSON.stringify({ id: msg.id, result }));
     } catch (err) {
-      ws.send(JSON.stringify({ id: msg.id, error: err.message || String(err) }));
+      socket.send(JSON.stringify({ id: msg.id, error: err.message || String(err) }));
     }
   };
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    if (ws !== socket) return;
+    ws = null;
     connected = false;
-    setBadge("OFF", "#ef4444");
+    setBadge(token ? "OFF" : "PAIR", token ? "#ef4444" : "#f59e0b");
     console.log("[ghost-bridge] disconnected");
-    scheduleReconnect();
+    if (!intentionallyDisconnected && token) scheduleReconnect();
   };
 
-  ws.onerror = () => {
+  socket.onerror = () => {
     // onclose will fire after this
   };
 }
 
-function disconnect() {
+function disconnect({ forgetToken = false } = {}) {
+  intentionallyDisconnected = true;
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (ws) { ws.close(); ws = null; }
+  const current = ws;
+  ws = null;
+  if (current) current.close();
   connected = false;
-  setBadge("OFF", "#ef4444");
+  if (forgetToken) {
+    token = "";
+    chrome.storage.local.remove("token");
+  }
+  setBadge(token ? "OFF" : "PAIR", token ? "#ef4444" : "#f59e0b");
 }
 
 function scheduleReconnect() {
+  if (intentionallyDisconnected || !token) return;
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -406,7 +484,11 @@ async function readTabContent(tabId, maxChars, selector) {
             node.getAttribute("placeholder") || node.getAttribute("title") || tag;
           const href = node.getAttribute("href") || "";
           const type = node.getAttribute("type") || "";
-          const value = node.value || "";
+          // Current form values can contain credentials or session material.
+          // Enumerate the control, but never send its value to the agent.
+          const value = (tag === "input" || tag === "textarea") && node.value
+            ? "[REDACTED]"
+            : "";
 
           // Store element reference for clicking
           node.setAttribute("data-ghost-id", items.length);
@@ -515,7 +597,7 @@ async function fill(args) {
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
 
-      return { filled: true, tag: el.tagName.toLowerCase(), value };
+      return { filled: true, tag: el.tagName.toLowerCase() };
     },
     args: [choice, selector || null, value],
   });
@@ -548,7 +630,7 @@ async function sendKey(args) {
       },
       args: [args.text],
     });
-    return { typed: args.text };
+    return { typed: true, characters: args.text.length };
   }
 
   // Single key press
@@ -760,14 +842,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === "connect") {
     port = msg.port || DEFAULT_PORT;
-    chrome.storage.local.set({ port });
-    disconnect();
-    connect();
-    sendResponse({ ok: true });
-    return false;
+    token = (msg.token || "").trim();
+    if (!token) {
+      sendResponse({ ok: false, error: "Pairing token is required" });
+      return false;
+    }
+    chrome.storage.local.set({ port, token }, () => {
+      disconnect();
+      intentionallyDisconnected = false;
+      connect();
+      sendResponse({ ok: true });
+    });
+    return true;
   }
   if (msg.type === "disconnect") {
-    disconnect();
+    disconnect({ forgetToken: true });
     sendResponse({ ok: true });
     return false;
   }
@@ -778,9 +867,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Startup
 // ---------------------------------------------------------------------------
 
-chrome.storage.local.get(["port"], (data) => {
+chrome.storage.local.get(["port", "token"], (data) => {
   if (data.port) port = data.port;
-  setBadge("OFF", "#ef4444");
+  if (data.token) token = data.token;
+  setBadge(token ? "OFF" : "PAIR", token ? "#ef4444" : "#f59e0b");
   connect();
 });
 

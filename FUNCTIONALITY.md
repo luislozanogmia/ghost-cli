@@ -1,220 +1,28 @@
-# Ghost CLI — Full Command Reference
+# Ghost functionality
 
-All browser commands go through the Chrome extension bridge at `http://127.0.0.1:9378`.
+Ghost exposes one shared command set over Chrome and Hermes Desktop.
 
-## Bridge API
+| Command | Function |
+|---|---|
+| `ghost_status` | Check the browser connection and active page |
+| `ghost_tab_list` | List tabs |
+| `ghost_tab_open` | Open a tab |
+| `ghost_tab_switch` | Activate a tab |
+| `ghost_tab_close` | Close a tab |
+| `ghost_navigate` | Navigate the active or selected tab |
+| `ghost_vacuum` | Navigate and enumerate interactive elements |
+| `ghost_read` | Read bounded page text |
+| `ghost_pdf_read` | Read bounded PDF pages through Chrome |
+| `ghost_click` | Click an enumerated element or selector |
+| `ghost_fill` | Fill an input |
+| `ghost_key` | Press a key or type text |
+| `ghost_eval` | Run a JavaScript function in the page (explicit opt-in) |
+| `ghost_screenshot` | Capture the visible page |
+| `ghost_scroll` | Scroll the page |
+| `ghost_wait` | Wait for a selector or bounded delay |
 
-### Check connection
-```bash
-curl -s http://127.0.0.1:9378/status
-```
-
-### Send a command
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"<command_name>","args":{...}}'
-```
-
-## Command Reference
-
-### ghost_navigate
-
-Navigate the active tab to a URL.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_navigate","args":{"url":"https://example.com"}}'
-```
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `url` | string | **required** — URL to navigate to |
-
-### ghost_vacuum
-
-Navigate and extract numbered interactive elements.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_vacuum","args":{"url":"https://example.com","limit":30}}'
-```
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `url` | string | — | Navigate before vacuuming |
-| `limit` | int | 50 | Max elements to return |
-| `wait` | enum | `load` | `load`, `networkidle`, `none` |
-
-### ghost_click
-
-Click a numbered element from the last vacuum.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_click","args":{"choice":5}}'
-```
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `choice` | int | **required** — element number |
-| `value` | string | Text for input/search fields |
-| `wait` | enum | Wait strategy after click |
-
-### ghost_read
-
-Extract clean readable text from the page.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_read","args":{"max_chars":4000,"selector":"article"}}'
-```
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `max_chars` | int | 8000 | Truncate output |
-| `selector` | string | — | CSS selector to scope reading |
-
-### ghost_pdf_read
-
-Read the HTTP(S) PDF open in the active Chrome tab. Results are page-indexed; `auto`
-uses embedded text when present and OCR only on pages that have none.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_pdf_read","args":{"page_start":1,"page_end":3,"mode":"auto","max_chars":50000}}'
-```
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `tab_id` | int | active tab | Chrome tab containing the PDF |
-| `page_start` | int | 1 | First page, 1-based |
-| `page_end` | int | final page | Last page, inclusive |
-| `mode` | enum | `auto` | `auto`, `text`, or `ocr` |
-| `max_chars` | int | 50000 | Maximum total returned characters |
-| `password` | string | — | Password for an encrypted PDF |
-
-The bridge accepts PDF bytes only through a one-time loopback upload and enforces
-50 MB, 300-page, page-range, and output-size limits. `blob:`, `file:`, and `data:`
-viewer sources are rejected explicitly.
-
-### ghost_scroll
-
-Scroll the page.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_scroll","args":{"direction":"down","amount":500}}'
-```
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `direction` | enum | `down` | `down`, `up`, `bottom`, `top` |
-| `amount` | int | 500 | Pixels to scroll |
-
-### ghost_screenshot
-
-Capture the visible page.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_screenshot"}'
-```
-
-### ghost_key
-
-Send keyboard input.
-
-```bash
-# Key press
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_key","args":{"key":"Enter"}}'
-
-# Type text
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_key","args":{"text":"search query"}}'
-```
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `key` | string | Key name (`Enter`, `Escape`, `Tab`, etc.) |
-| `text` | string | Text to type character by character |
-
-### ghost_eval
-
-Run JavaScript on the current page. Only works on sites without strict CSP.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_eval","args":{"script":"() => document.title"}}'
-```
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `script` | string | **required** — JS arrow function |
-
-### ghost_tab_list
-
-List all open tabs.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_tab_list"}'
-```
-
-### ghost_tab_open
-
-Open a new tab.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_tab_open","args":{"url":"https://example.com"}}'
-```
-
-### ghost_tab_switch
-
-Switch active tab by index.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_tab_switch","args":{"tab_index":0}}'
-```
-
-### ghost_save_auth
-
-Save browser cookies to persist sessions.
-
-```bash
-curl -s -X POST http://127.0.0.1:9378/call \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"ghost_save_auth"}'
-```
-
-## Error Codes
-
-All errors: `Error [CODE]: message`
-
-| Code | Meaning |
-|------|---------|
-| `ELEMENT_NOT_FOUND` | Menu number doesn't exist |
-| `NAVIGATION_TIMEOUT` | Page load timed out |
-| `NO_BROWSER` | Extension not connected |
-| `NO_VACUUM` | Must vacuum before clicking |
-| `INVALID_INPUT` | Missing or malformed argument |
-| `BROWSER_DISCONNECTED` | Browser was closed |
-| `TAB_NOT_FOUND` | Tab index out of range |
-| `CLICK_FAILED` | Element could not be activated |
-| `FILL_REQUIRED` | Input field needs a `value` |
+Chrome uses the authenticated extension bridge on loopback. Hermes Desktop uses
+the authenticated local protocol described in `IN_APP_BROWSER_PROTOCOL.md`.
+The Hermes Agent adapter in `hermes-plugin/` registers the same tools without
+adding dependencies to Hermes core. `ghost_eval` is registered but blocked
+unless the operator enables `allow_eval`.

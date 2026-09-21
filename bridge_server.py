@@ -1,11 +1,10 @@
-"""
-Ghost Bridge Server — WebSocket server that the Chrome extension connects to.
+"""Ghost Bridge Server for the Chrome extension.
 
-Replaces CDP transport entirely. Agents call ghost-cli → daemon → this server
-→ Chrome extension → Chrome APIs. No CDP. No debugging dialogs.
+Agents call the authenticated loopback HTTP API, which forwards commands to an
+authenticated extension connection and returns bounded JSON results.
 
 Usage:
-    .venv/bin/python bridge_server.py [--port 9377]
+    python3 bridge_server.py [--port 9377]
 
 The server exposes:
     ws://127.0.0.1:9377/ghost-bridge  — Chrome extension connects here
@@ -17,9 +16,11 @@ import asyncio
 import json
 import argparse
 import hashlib
+import hmac
 import secrets
 import signal
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -34,6 +35,23 @@ from pdf_reader import (
     PdfReadError,
     extract_pdf,
 )
+from bridge_auth import (
+    AUTH_NONCE_HEADER,
+    AUTH_SIGNATURE_HEADER,
+    AUTH_TIMESTAMP_HEADER,
+    AUTH_INSTANCE_HEADER,
+    AUTH_CHALLENGE_HEADER,
+    AUTH_WINDOW_SECONDS,
+    RESPONSE_SIGNATURE_HEADER,
+    BridgeAuthError,
+    challenge_init_signature,
+    challenge_signature,
+    load_bridge_token,
+    response_signature,
+    token_path,
+)
+from bridge_auth import _request_message
+from ghost_tool_defs import TOOL_NAMES
 
 try:
     import websockets
@@ -49,22 +67,88 @@ except ImportError:
     sys.exit(1)
 
 
+MAX_HTTP_BODY_BYTES = 1024 * 1024
+WS_NONCE_BYTES = 32
+HTTP_COMMANDS = TOOL_NAMES | {"ping"}
+MAX_PENDING_CHALLENGES = 1024
+MAX_INIT_NONCES = 4096
+
+
 class BridgeServer:
-    def __init__(self, port=9377):
+    def __init__(self, port=9377, token=None, allow_eval=False):
         self.port = port
+        self.token = token or load_bridge_token(create=True)
         self.extension_ws = None
         self.pending = {}  # id -> Future
         self.pending_pdf_uploads = {}  # one-time token -> Future[bytes]
         self.connected = False
+        self.allow_eval = allow_eval
+        self.http_nonces = {}
+        self.instance_id = secrets.token_hex(16)
+        self.http_challenges = {}
+        self.http_init_nonces = {}
 
     # ------------------------------------------------------------------
     # WebSocket handler — Chrome extension connects here
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _origin(websocket):
+        request = getattr(websocket, "request", None)
+        headers = getattr(request, "headers", None)
+        if headers is None:
+            headers = getattr(websocket, "request_headers", {})
+        return headers.get("Origin") if headers else None
+
     async def ws_handler(self, websocket):
-        print(f"[bridge] Extension connected from {websocket.remote_address}")
+        origin = self._origin(websocket)
+        if not origin or not origin.startswith("chrome-extension://"):
+            await websocket.close(code=4003, reason="unauthorized origin")
+            return
+        try:
+            raw_auth = await asyncio.wait_for(websocket.recv(), timeout=5)
+            auth = json.loads(raw_auth)
+        except (asyncio.TimeoutError, json.JSONDecodeError, TypeError):
+            await websocket.close(code=4003, reason="authentication required")
+            return
+
+        client_nonce = auth.get("client_nonce", "") if auth.get("type") == "auth_init" else ""
+        if (
+            not isinstance(client_nonce, str)
+            or len(client_nonce) != WS_NONCE_BYTES * 2
+            or any(char not in "0123456789abcdef" for char in client_nonce)
+        ):
+            await websocket.close(code=4003, reason="authentication failed")
+            return
+
+        server_nonce = secrets.token_hex(WS_NONCE_BYTES)
+        server_message = f"ghost-ws-server-v1:{client_nonce}:{server_nonce}".encode()
+        server_proof = hmac.new(self.token.encode(), server_message, hashlib.sha256).hexdigest()
+        await websocket.send(json.dumps({
+            "type": "auth_challenge",
+            "server_nonce": server_nonce,
+            "server_proof": server_proof,
+        }))
+        try:
+            raw_response = await asyncio.wait_for(websocket.recv(), timeout=5)
+            response = json.loads(raw_response)
+        except (asyncio.TimeoutError, json.JSONDecodeError, TypeError):
+            await websocket.close(code=4003, reason="authentication failed")
+            return
+        supplied = response.get("client_proof", "") if response.get("type") == "auth_response" else ""
+        client_message = f"ghost-ws-client-v1:{client_nonce}:{server_nonce}".encode()
+        expected = hmac.new(self.token.encode(), client_message, hashlib.sha256).hexdigest()
+        if not isinstance(supplied, str) or not hmac.compare_digest(supplied, expected):
+            await websocket.close(code=4003, reason="authentication failed")
+            return
+
+        print("[bridge] Authenticated extension connected")
+        previous = self.extension_ws
+        if previous is not None and previous is not websocket:
+            await previous.close(code=4000, reason="replaced by a newer extension connection")
         self.extension_ws = websocket
         self.connected = True
+        await websocket.send(json.dumps({"type": "authenticated"}))
 
         try:
             async for raw in websocket:
@@ -92,13 +176,14 @@ class BridgeServer:
             pass
         finally:
             print("[bridge] Extension disconnected")
-            self.extension_ws = None
-            self.connected = False
-            # Fail all pending requests
-            for future in self.pending.values():
-                if not future.done():
-                    future.set_result({"error": "Extension disconnected"})
-            self.pending.clear()
+            if self.extension_ws is websocket:
+                self.extension_ws = None
+                self.connected = False
+                # Fail all pending requests
+                for future in self.pending.values():
+                    if not future.done():
+                        future.set_result({"error": "Extension disconnected"})
+                self.pending.clear()
 
     # ------------------------------------------------------------------
     # Send a command to the extension and wait for response
@@ -131,29 +216,169 @@ class BridgeServer:
     # HTTP API — agents POST commands here
     # ------------------------------------------------------------------
 
-    async def handle_call(self, request):
+    def _authorized(self, request, body=b""):
+        timestamp = request.headers.get(AUTH_TIMESTAMP_HEADER, "")
+        nonce = request.headers.get(AUTH_NONCE_HEADER, "")
+        supplied = request.headers.get(AUTH_SIGNATURE_HEADER, "")
+        instance = request.headers.get(AUTH_INSTANCE_HEADER, "")
+        challenge = request.headers.get(AUTH_CHALLENGE_HEADER, "")
         try:
-            body = await request.json()
+            timestamp_value = int(timestamp)
+        except (TypeError, ValueError):
+            return False
+        now = int(time.time())
+        challenge_state = self.http_challenges.get(challenge)
+        if challenge_state is None:
+            return False
+        expires, _client_nonce = challenge_state
+        if instance != self.instance_id or expires < now:
+            return False
+        if abs(now - timestamp_value) > AUTH_WINDOW_SECONDS:
+            return False
+        if len(nonce) != 32 or any(char not in "0123456789abcdef" for char in nonce):
+            return False
+        self.http_nonces = {
+            value: seen for value, seen in self.http_nonces.items()
+            if now - seen <= AUTH_WINDOW_SECONDS
+        }
+        if nonce in self.http_nonces:
+            return False
+        expected = hmac.new(
+            self.token.encode(),
+            _request_message(
+                request.method,
+                request.path,
+                timestamp,
+                nonce,
+                instance,
+                challenge,
+                body,
+            ),
+            hashlib.sha256,
+        ).hexdigest()
+        if not supplied or not hmac.compare_digest(supplied, expected):
+            return False
+        self.http_challenges.pop(challenge, None)
+        self.http_nonces[nonce] = now
+        return True
+
+    async def handle_challenge(self, request):
+        now = int(time.time())
+        timestamp = request.headers.get(AUTH_TIMESTAMP_HEADER, "")
+        client_nonce = request.headers.get(AUTH_NONCE_HEADER, "")
+        supplied = request.headers.get(AUTH_SIGNATURE_HEADER, "")
+        try:
+            timestamp_value = int(timestamp)
+        except (TypeError, ValueError):
+            return self._reject_unauthorized()
+        if (
+            abs(now - timestamp_value) > AUTH_WINDOW_SECONDS
+            or len(client_nonce) != 32
+            or any(char not in "0123456789abcdef" for char in client_nonce)
+        ):
+            return self._reject_unauthorized()
+        expected = challenge_init_signature(self.token, client_nonce, timestamp)
+        self.http_init_nonces = {
+            value: seen for value, seen in self.http_init_nonces.items()
+            if now - seen <= AUTH_WINDOW_SECONDS
+        }
+        if (
+            client_nonce in self.http_init_nonces
+            or not supplied
+            or not hmac.compare_digest(supplied, expected)
+        ):
+            return self._reject_unauthorized()
+        if len(self.http_init_nonces) >= MAX_INIT_NONCES:
+            return web.json_response({"error": "Challenge rate limit reached"}, status=503)
+        self.http_init_nonces[client_nonce] = now
+        self.http_challenges = {
+            value: state for value, state in self.http_challenges.items()
+            if state[0] >= now
+        }
+        if len(self.http_challenges) >= MAX_PENDING_CHALLENGES:
+            return web.json_response({"error": "Challenge capacity reached"}, status=503)
+        challenge = secrets.token_hex(32)
+        expires = now + AUTH_WINDOW_SECONDS
+        self.http_challenges[challenge] = (expires, client_nonce)
+        return web.json_response({
+            "instance": self.instance_id,
+            "client_nonce": client_nonce,
+            "challenge": challenge,
+            "expires": expires,
+            "proof": challenge_signature(
+                self.token,
+                self.instance_id,
+                client_nonce,
+                challenge,
+                expires,
+            ),
+        })
+
+    def _signed_json_response(self, request, data, status=200):
+        body = json.dumps(data, separators=(",", ":")).encode()
+        nonce = request.headers.get(AUTH_NONCE_HEADER, "")
+        headers = {
+            RESPONSE_SIGNATURE_HEADER: response_signature(self.token, nonce, status, body)
+        }
+        return web.Response(body=body, status=status, content_type="application/json", headers=headers)
+
+    def _reject_unauthorized(self):
+        return web.json_response(
+            {"error": "UNAUTHORIZED"},
+            status=401,
+        )
+
+    async def handle_call(self, request):
+        if request.content_length is not None and request.content_length > MAX_HTTP_BODY_BYTES:
+            return web.json_response({"error": "Request body too large"}, status=413)
+        try:
+            raw_body = await request.read()
         except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
+            return web.json_response({"error": "Invalid request body"}, status=400)
+        if len(raw_body) > MAX_HTTP_BODY_BYTES:
+            return web.json_response({"error": "Request body too large"}, status=413)
+        if not self._authorized(request, raw_body):
+            return self._reject_unauthorized()
+        try:
+            body = json.loads(raw_body)
+        except Exception:
+            return self._signed_json_response(request, {"error": "Invalid JSON"}, status=400)
+        if not isinstance(body, dict):
+            return self._signed_json_response(
+                request, {"error": "JSON body must be an object"}, status=400
+            )
 
         command = body.get("command")
         args = body.get("args", {})
         timeout = body.get("timeout", 60)
 
-        if not command:
-            return web.json_response({"error": "Missing 'command'"}, status=400)
+        if not isinstance(command, str) or command not in HTTP_COMMANDS:
+            return self._signed_json_response(request, {"error": "Unsupported command"}, status=400)
+        if command == "ghost_eval" and not self.allow_eval:
+            return self._signed_json_response(
+                request,
+                {"error": "ghost_eval is disabled; restart with --allow-eval to enable it"},
+                status=403,
+            )
+        if not isinstance(args, dict):
+            return self._signed_json_response(request, {"error": "'args' must be an object"}, status=400)
+        if isinstance(timeout, bool):
+            return self._signed_json_response(request, {"error": "'timeout' must be a number"}, status=400)
+        try:
+            timeout = max(1, min(float(timeout), 300))
+        except (TypeError, ValueError):
+            return self._signed_json_response(request, {"error": "'timeout' must be a number"}, status=400)
 
         try:
             if command == "ghost_pdf_read":
                 result = await self.handle_pdf_read(args, timeout)
-                return web.json_response({"result": result})
+                return self._signed_json_response(request, {"result": result})
             result = await self.send_command(command, args, timeout)
             if "error" in result:
-                return web.json_response({"error": result["error"]}, status=502)
-            return web.json_response({"result": result.get("result", result)})
+                return self._signed_json_response(request, {"error": result["error"]}, status=502)
+            return self._signed_json_response(request, {"result": result.get("result", result)})
         except Exception as e:
-            return web.json_response({"error": str(e)}, status=502)
+            return self._signed_json_response(request, {"error": str(e)}, status=502)
 
     async def handle_pdf_upload(self, request):
         """Accept one bounded upload created for a single ghost_pdf_read call."""
@@ -265,7 +490,9 @@ class BridgeServer:
                     upload_future.exception()
 
     async def handle_status(self, request):
-        return web.json_response({
+        if not self._authorized(request):
+            return self._reject_unauthorized()
+        return self._signed_json_response(request, {
             "connected": self.connected,
             "port": self.port,
             "pending_commands": len(self.pending),
@@ -288,7 +515,8 @@ class BridgeServer:
         )
 
         # HTTP server for agent commands
-        app = web.Application()
+        app = web.Application(client_max_size=MAX_HTTP_BODY_BYTES)
+        app.router.add_get("/challenge", self.handle_challenge)
         app.router.add_post("/call", self.handle_call)
         app.router.add_post("/pdf-upload/{token}", self.handle_pdf_upload)
         app.router.add_get("/status", self.handle_status)
@@ -301,6 +529,7 @@ class BridgeServer:
 
         print(f"[bridge] WebSocket server on ws://127.0.0.1:{self.port}/ghost-bridge")
         print(f"[bridge] HTTP API on http://127.0.0.1:{self.port + 1}/call")
+        print(f"[bridge] Pair the extension with the token stored at {token_path()}")
         print(f"[bridge] Waiting for Chrome extension...")
 
         # Wait forever
@@ -328,10 +557,18 @@ class BridgeServer:
 def main():
     parser = argparse.ArgumentParser(description="Ghost Bridge Server")
     parser.add_argument("--port", type=int, default=9377, help="WebSocket port (HTTP = port+1)")
+    parser.add_argument(
+        "--allow-eval",
+        action="store_true",
+        help="Explicitly enable arbitrary page JavaScript through ghost_eval",
+    )
     args = parser.parse_args()
 
-    server = BridgeServer(port=args.port)
-    asyncio.run(server.run())
+    try:
+        server = BridgeServer(port=args.port, allow_eval=args.allow_eval)
+        asyncio.run(server.run())
+    except BridgeAuthError as exc:
+        raise SystemExit(f"Bridge authentication error: {exc}") from exc
 
 
 if __name__ == "__main__":

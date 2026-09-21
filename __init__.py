@@ -1,10 +1,3 @@
-"""
-Ghost Browser — Headless page intelligence for agentic navigation.
+"""Ghost browser control through Chrome and Hermes Desktop."""
 
-Modules:
-    scout  — Captures accessibility tree + DOM attributes into a unified manifest.
-
-Ghost Browser automation toolkit.
-"""
-
-__version__ = "0.3.2"
+__version__ = "0.4.0"

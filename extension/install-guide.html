@@ -275,7 +275,7 @@
     <div class="header">
       <div class="logo">G</div>
       <h1>Ghost Browser Extension</h1>
-      <p>Three steps to browser automation without debugging dialogs</p>
+      <p>Three steps to authenticated browser automation</p>
     </div>
 
     <div class="step" id="step1">
@@ -316,7 +316,7 @@
       <div class="step-number">3</div>
       <div class="step-check" onclick="toggleStep(3)">○</div>
       <h2>Connect</h2>
-      <p>Click the <strong>Ghost Bridge</strong> icon in your Chrome toolbar, then click <strong>Connect</strong>.</p>
+      <p>Click the <strong>Ghost Bridge</strong> icon, paste the pairing token printed by the installer, then click <strong>Connect</strong>.</p>
       <div class="visual-guide">
         <div style="display:inline-flex;align-items:center;gap:8px;">
           <span class="arrow arrow-right">👉</span>
@@ -330,7 +330,7 @@
 
     <div class="status-bar" id="statusBar">
       <h3 id="statusTitle" class="checking">⏳ Waiting for setup...</h3>
-      <p id="statusDetail">Complete the steps above, then the bridge will connect automatically</p>
+      <p id="statusDetail">Complete the steps above, then confirm the extension badge says ON</p>
     </div>
   </div>
 
@@ -363,39 +363,7 @@
       }
     }
 
-    // Poll bridge status
-    async function checkStatus() {
-      try {
-        const res = await fetch('http://127.0.0.1:9378/status');
-        const data = await res.json();
-        const title = document.getElementById('statusTitle');
-        const detail = document.getElementById('statusDetail');
-        if (data.connected) {
-          title.className = 'connected';
-          title.textContent = '✅ Ghost Bridge is live!';
-          detail.textContent = 'Extension connected. You can close this tab.';
-          // Auto-mark all steps done
-          for (let i = 1; i <= 3; i++) {
-            document.getElementById('step' + i).classList.add('done');
-            document.getElementById('step' + i).querySelector('.step-check').textContent = '✓';
-          }
-          return; // Stop polling
-        } else {
-          title.className = 'checking';
-          title.textContent = '⏳ Bridge server running, waiting for extension...';
-          detail.textContent = 'Complete steps 2 and 3 above';
-        }
-      } catch {
-        const title = document.getElementById('statusTitle');
-        const detail = document.getElementById('statusDetail');
-        title.className = 'disconnected';
-        title.textContent = '⚠ Bridge server not running';
-        detail.textContent = 'Run from the repository root: .venv/bin/python bridge_server.py &';
-      }
-      setTimeout(checkStatus, 2000);
-    }
-
-    checkStatus();
+    document.getElementById('statusTitle').textContent = '🔐 Pairing required';
   </script>
 </body>
 </html>

@@ -94,6 +94,7 @@ class MockInAppBrowserServer:
         self._server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server_sock.bind(str(self.socket_path))
+        os.chmod(self.socket_path, 0o600)
         self._server_sock.listen(5)
         self._server_sock.settimeout(0.5)
 
@@ -284,7 +285,6 @@ class MockInAppBrowserServer:
         return {
             "filled": True,
             "tag": "input",
-            "value": value,
         }
 
     def _cmd_key(self, params: dict) -> dict:
@@ -294,8 +294,14 @@ class MockInAppBrowserServer:
             raise ValueError("Provide key or text")
 
         if text:
-            return {"typed": text}
+            return {"typed": True, "characters": len(text)}
         return {"key": key, "pressed": True}
+
+    def _cmd_eval(self, params: dict) -> dict:
+        script = params.get("script")
+        if not script:
+            raise ValueError("script is required")
+        return {"value": "mock-result", "script": script}
 
     def _cmd_tab_list(self, params: dict) -> dict:
         return {
