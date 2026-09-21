@@ -29,7 +29,7 @@ config_schema:
     type: integer
     required: false
     description: "Authenticated Chrome bridge HTTP port. Defaults to 9378."
-  hermes_port:
-    type: integer
+  allow_eval:
+    type: boolean
     required: false
-    description: "Hermes Desktop browser loopback fallback port. Defaults to 9400."
+    description: "Explicitly enable arbitrary page JavaScript through ghost_eval. Defaults to false."

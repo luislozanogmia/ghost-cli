@@ -76,19 +76,27 @@ class HermesPluginTests(unittest.TestCase):
         client_module = __import__(module.__name__ + ".client", fromlist=["BrowserClient"])
         with tempfile.TemporaryDirectory() as directory:
             socket_path = Path(directory) / "browser.sock"
-            server = MockInAppBrowserServer(socket_path, token="hermes-test-token")
+            token = "hermes-test-token-0123456789abcdef"
+            server = MockInAppBrowserServer(socket_path, token=token)
             server.start()
             try:
                 with mock.patch.dict(os.environ, {
                     "GHOST_IN_APP_BROWSER_SOCKET": str(socket_path),
-                    "GHOST_IN_APP_BROWSER_TOKEN": "hermes-test-token",
+                    "GHOST_IN_APP_BROWSER_TOKEN": token,
                 }, clear=False):
-                    client = client_module.BrowserClient(backend="hermes")
+                    client = client_module.BrowserClient(backend="hermes", allow_eval=True)
                     result = client.call("ghost_eval", {"script": "() => document.title"})
                 self.assertEqual(result["value"], "mock-result")
                 self.assertEqual(client.active_backend, "hermes")
             finally:
                 server.stop()
+
+    def test_eval_is_disabled_without_explicit_opt_in(self):
+        module = load_plugin()
+        client_module = __import__(module.__name__ + ".client", fromlist=["BrowserClient"])
+        client = client_module.BrowserClient(backend="chrome")
+        with self.assertRaisesRegex(client_module.GhostClientError, "disabled"):
+            client.call("ghost_eval", {"script": "() => document.cookie"})
 
 
 class RepositoryBoundaryTests(unittest.TestCase):

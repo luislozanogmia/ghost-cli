@@ -8,5 +8,7 @@ the Ghost loopback bridge and must authenticate before it can receive commands.
 3. Load this directory as an unpacked extension.
 4. Paste the token into the popup and click **Connect**.
 
-The popup stores the token in extension-local storage. The token is sent as the
-first WebSocket message and is never placed in the connection URL.
+The popup stores the token in extension-local storage. The extension and bridge
+exchange nonce-bound HMAC proofs, so the token is never transmitted or placed
+in the connection URL. Disconnect removes the stored pairing token and does not
+reconnect until the user pairs again.

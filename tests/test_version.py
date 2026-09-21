@@ -30,12 +30,27 @@ class VersionTests(unittest.TestCase):
 
     def test_chrome_extension_authenticates_before_marking_connected(self):
         source = (REPO_ROOT / "extension" / "background.js").read_text()
-        auth_send = source.index('type: "auth", token')
+        auth_send = source.index('type: "auth_init", client_nonce: clientNonce')
+        self.assertNotIn('type: "auth", token', source)
+        self.assertIn("ghost-ws-server-v1", source)
         authenticated = source.index('msg.type === "authenticated"')
         connected = source.index("connected = true", authenticated)
         self.assertLess(auth_send, authenticated)
         self.assertLess(authenticated, connected)
         self.assertNotIn("ghost-bridge?", source)
+
+    def test_chrome_extension_redacts_and_does_not_echo_typed_secrets(self):
+        source = (REPO_ROOT / "extension" / "background.js").read_text()
+        self.assertIn('(tag === "input" || tag === "textarea") && node.value', source)
+        self.assertIn('? "[REDACTED]"', source)
+        self.assertNotIn("return { filled: true, tag: el.tagName.toLowerCase(), value }", source)
+        self.assertNotIn("return { typed: args.text }", source)
+
+    def test_disconnect_unpairs_and_suppresses_reconnect(self):
+        source = (REPO_ROOT / "extension" / "background.js").read_text()
+        self.assertIn("disconnect({ forgetToken: true })", source)
+        self.assertIn("if (intentionallyDisconnected || !token) return", source)
+        self.assertIn('chrome.storage.local.remove("token")', source)
 
     def test_hermes_plugin_version(self):
         manifest = (REPO_ROOT / "hermes-plugin" / "plugin.yaml").read_text()

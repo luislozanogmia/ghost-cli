@@ -21,6 +21,8 @@ that value into the extension popup. For Hermes Desktop, the app must expose
 the protocol documented in `IN_APP_BROWSER_PROTOCOL.md` and create its private
 token file.
 
-The plugin intentionally does not export browser session material. JavaScript
-evaluation is available as `ghost_eval` on both browser targets.
+The plugin has no dedicated browser-session export tool. JavaScript evaluation
+is registered as `ghost_eval`, but is blocked by default because page JavaScript
+can read page-visible secrets. Set `allow_eval: true` only when that capability
+is required. The Chrome bridge must also be started with `--allow-eval`.
 `ghost_pdf_read` is available only through the Chrome extension.

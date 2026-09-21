@@ -7,7 +7,7 @@ targets:
 - the browser pane already running in Hermes Desktop.
 
 Both transports are local and token-authenticated. Ghost never asks the model
-for browser credentials and does not export browser session material.
+for browser credentials and provides no dedicated browser-session export command.
 
 ## Chrome setup
 
@@ -48,13 +48,21 @@ the Chrome extension.
 PDF reading is Chrome-only. The other listed commands are shared by Chrome and
 Hermes Desktop.
 
-`ghost_eval` intentionally remains available because some browser tasks require
-page-context JavaScript. Treat its script input as privileged local code.
+`ghost_eval` remains available because some browser tasks require page-context
+JavaScript, but it is disabled by default. Enable it explicitly with
+`ghost-cli serve --allow-eval` and `ghost-cli call ... --allow-eval`, or set
+`allow_eval: true` in the Hermes plugin. Eval can read page-visible secrets and
+must be treated as privileged local code.
 
 ## Security
 
 - All listeners bind only to loopback or a private Unix socket.
-- HTTP and extension WebSocket traffic require the same high-entropy token.
-- Tokens are never accepted in URLs and are not written to logs.
-- Chrome accepts commands only after the extension authenticates.
+- Agent HTTP API requests and responses are signed with one-time,
+  server-authenticated HMAC challenges.
+- The extension and bridge mutually authenticate with nonce-bound HMAC proofs.
+- The Chrome pairing token is never transmitted over the bridge, accepted in
+  URLs, or written to logs. Hermes sends its separate token only inside its
+  owner-only Unix socket.
+- Password and token-like fields are redacted from ordinary page reads; fill and
+  key results never echo entered text.
 - Responses are bounded; PDF uploads additionally use one-time capabilities.

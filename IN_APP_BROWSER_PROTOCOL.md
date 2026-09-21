@@ -5,20 +5,20 @@ local, authenticated request/response channel.
 
 ## Transport and framing
 
-- macOS/Linux: Unix socket at `$GHOST_IN_APP_BROWSER_SOCKET`, otherwise
+- Unix socket at `$GHOST_IN_APP_BROWSER_SOCKET`, otherwise
   `$XDG_RUNTIME_DIR/ghost/in-app-browser.sock`.
-- TCP fallback: `127.0.0.1:$GHOST_IN_APP_BROWSER_PORT` (default `9400`).
 - Every frame is a four-byte big-endian length followed by UTF-8 JSON.
 - Requests and responses are capped at 16 MiB.
 
 The Unix socket and its parent directory must be private to the current user.
-TCP must bind only to loopback.
+Ghost does not fall back to a network listener when the socket is absent.
 
 ## Authentication
 
 Every request contains the token from `GHOST_IN_APP_BROWSER_TOKEN` or the
 private file selected by `GHOST_IN_APP_BROWSER_TOKEN_FILE`. The default token
-file is next to the socket. The host compares tokens in constant time and
+file is next to the socket. Tokens must contain at least 32 bytes. The host
+compares tokens in constant time and
 returns `AUTH_FAILED` without running the requested action when authentication
 fails.
 
@@ -62,6 +62,11 @@ match the request `id`.
 | `screenshot` | Capture the visible page | optional `format`, `quality` |
 | `scroll` | Scroll the page | `direction`, optional `amount` |
 | `wait` | Wait for a selector or delay | `selector` or `ms`, optional `timeout` |
+
+The host must not include current input or textarea values in `read`/`vacuum`
+results, and `fill`/`key` results must acknowledge the action without echoing
+the supplied value or text. Ghost clients additionally strip common echo fields
+for compatibility with older hosts.
 
 For `eval`, the host executes only after authenticating the request and returns
 a JSON-serializable value. Page content and script results are untrusted and

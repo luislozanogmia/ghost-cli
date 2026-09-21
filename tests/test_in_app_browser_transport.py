@@ -37,9 +37,7 @@ class TestInAppBrowserTransportConnection(unittest.TestCase):
         """Cannot connect when no server is running."""
         transport = InAppBrowserTransport(
             socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
-            tcp_host="127.0.0.1",
-            tcp_port=19999,
-            token="connection-test-token",
+            token="connection-test-token-0123456789abcdef",
         )
         with self.assertRaises(InAppBrowserConnectionError):
             transport.call("status")
@@ -47,16 +45,12 @@ class TestInAppBrowserTransportConnection(unittest.TestCase):
     def test_ping_returns_false_when_disconnected(self):
         transport = InAppBrowserTransport(
             socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
-            tcp_host="127.0.0.1",
-            tcp_port=19999,
         )
         self.assertFalse(transport.ping())
 
     def test_status_returns_disconnected_when_no_server(self):
         transport = InAppBrowserTransport(
             socket_path=Path("/tmp/ghost-in-app-browser-nonexistent.sock"),
-            tcp_host="127.0.0.1",
-            tcp_port=19999,
         )
         status = transport.status()
         self.assertFalse(status.get("connected", True))
@@ -69,7 +63,7 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
     def setUpClass(cls):
         cls._tmpdir = tempfile.mkdtemp(prefix="ghost-in-app-browser-test-")
         cls._sock_path = Path(cls._tmpdir) / "ghost-bridge.sock"
-        cls._token = "test-secret-token-42"
+        cls._token = "test-secret-token-42-0123456789abcdef"
 
         cls.server = MockInAppBrowserServer(cls._sock_path, token=cls._token)
         cls.server.start()
@@ -93,7 +87,7 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
     def test_auth_failure(self):
         bad_transport = InAppBrowserTransport(
             socket_path=self._sock_path,
-            token="wrong-token",
+            token="wrong-token-0123456789abcdef012345",
             timeout=5,
         )
         with self.assertRaises(InAppBrowserAuthError):
@@ -169,7 +163,7 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
     def test_fill(self):
         result = self.transport.fill("hello world", choice=2)
         self.assertTrue(result["filled"])
-        self.assertEqual(result["value"], "hello world")
+        self.assertNotIn("value", result)
 
     # -- Key --
 
@@ -180,7 +174,8 @@ class TestInAppBrowserTransportWithMock(unittest.TestCase):
 
     def test_key_type_text(self):
         result = self.transport.key(text="search query")
-        self.assertEqual(result["typed"], "search query")
+        self.assertTrue(result["typed"])
+        self.assertEqual(result["characters"], len("search query"))
 
     def test_eval(self):
         result = self.transport.eval("() => document.title")
@@ -286,7 +281,7 @@ class TestInAppBrowserTransportBounds(unittest.TestCase):
         cls._tmpdir = tempfile.mkdtemp(prefix="ghost-in-app-browser-bounds-")
         cls._sock_path = Path(cls._tmpdir) / "ghost-bridge.sock"
 
-        cls._token = "bounds-secret-token"
+        cls._token = "bounds-secret-token-0123456789abcdef"
         cls.server = MockInAppBrowserServer(cls._sock_path, token=cls._token)
         cls.server.start()
 
@@ -311,9 +306,8 @@ class TestInAppBrowserTransportBounds(unittest.TestCase):
         self.assertIn("text", result)
 
     def test_missing_auth_is_rejected_before_connect(self):
-        transport = InAppBrowserTransport(socket_path=self._sock_path, token="", timeout=5)
         with self.assertRaises(InAppBrowserAuthError):
-            transport.call("status")
+            InAppBrowserTransport(socket_path=self._sock_path, token="", timeout=5)
 
 
 if __name__ == "__main__":

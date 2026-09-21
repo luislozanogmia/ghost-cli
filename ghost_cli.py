@@ -33,8 +33,9 @@ HERMES_COMMANDS = {
 
 
 class BrowserClient:
-    def __init__(self, backend: str = "auto"):
+    def __init__(self, backend: str = "auto", allow_eval: bool = False):
         self.backend = backend
+        self.allow_eval = allow_eval
         self.transport: Any = None
 
     def connect(self):
@@ -59,6 +60,8 @@ class BrowserClient:
     def call(self, command: str, args: dict[str, Any]):
         if command not in TOOL_NAMES:
             raise ValueError(f"Unsupported command: {command}")
+        if command == "ghost_eval" and not self.allow_eval:
+            raise ValueError("ghost_eval is disabled; pass --allow-eval to opt in")
         if command == "ghost_pdf_read" and self.backend == "hermes":
             raise ValueError("ghost_pdf_read is available through the Chrome extension only")
         if command == "ghost_pdf_read" and self.backend == "auto":
@@ -95,12 +98,14 @@ def build_parser() -> argparse.ArgumentParser:
     call.add_argument("command", choices=sorted(TOOL_NAMES))
     call.add_argument("--args", type=_json_object, default={})
     call.add_argument("--backend", choices=("auto", "chrome", "hermes"), default=os.getenv("GHOST_BROWSER_BACKEND", "auto"))
+    call.add_argument("--allow-eval", action="store_true", help="Explicitly allow ghost_eval for this call")
 
     token = sub.add_parser("bridge-token", help="Create and print the Chrome extension pairing token")
     token.add_argument("--path-only", action="store_true", help="Print only the token file path")
 
     serve = sub.add_parser("serve", help="Run the Chrome extension bridge")
     serve.add_argument("--port", type=int, default=9377)
+    serve.add_argument("--allow-eval", action="store_true", help="Explicitly enable ghost_eval in the bridge")
     return parser
 
 
@@ -115,10 +120,10 @@ def main() -> None:
             import asyncio
             from bridge_server import BridgeServer
 
-            asyncio.run(BridgeServer(port=args.port).run())
+            asyncio.run(BridgeServer(port=args.port, allow_eval=args.allow_eval).run())
             return
 
-        client = BrowserClient(args.backend)
+        client = BrowserClient(args.backend, allow_eval=getattr(args, "allow_eval", False))
         if args.subcommand == "status":
             result = client.connect()
         else:

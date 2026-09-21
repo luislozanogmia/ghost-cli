@@ -71,8 +71,8 @@ echo -e "${CYAN}Waiting for connection...${NC}"
 
 # Step 3: Poll until connected
 for i in $(seq 1 60); do
-    STATUS=$(curl -s -H "Authorization: Bearer ${PAIRING_TOKEN}" http://127.0.0.1:9378/status 2>/dev/null || echo '{}')
-    if echo "$STATUS" | "$PYTHON_BIN" -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('connected') else 1)" 2>/dev/null; then
+    STATUS=$("$PYTHON_BIN" "$SCRIPT_DIR/ghost_cli.py" status --backend chrome 2>/dev/null || echo '{}')
+    if echo "$STATUS" | "$PYTHON_BIN" -c "import sys,json; data=json.load(sys.stdin); sys.exit(0 if data.get('result', {}).get('connected') else 1)" 2>/dev/null; then
         echo ""
         echo -e "${GREEN}${BOLD}✅ Ghost Browser Extension is live!${NC}"
         echo ""

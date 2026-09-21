@@ -18,14 +18,18 @@ tests for changes to either transport.
 ```
 
 The installer creates a private token and prints it for one-time entry into the
-extension popup. Direct HTTP callers must read that token and send it as a
-Bearer credential; normal users should use `ghost-cli` instead.
+extension popup. Direct HTTP callers must sign requests and verify response
+signatures with that token; normal users should use `ghost-cli` instead.
+
+`ghost_eval` is privileged and disabled by default. It requires explicit opt-in
+in both the bridge/CLI and the Hermes plugin configuration.
 
 Hermes Desktop integration follows `IN_APP_BROWSER_PROTOCOL.md`. The standalone
 Hermes Agent adapter is in `hermes-plugin/` and must continue to validate with:
 
 ```bash
-hermes plugins validate ./hermes-plugin
+hermes plugins doctor --ci ./hermes-plugin
+hermes plugins compat ./hermes-plugin
 ```
 
 Run the repository checks with:

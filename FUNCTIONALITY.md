@@ -16,7 +16,7 @@ Ghost exposes one shared command set over Chrome and Hermes Desktop.
 | `ghost_click` | Click an enumerated element or selector |
 | `ghost_fill` | Fill an input |
 | `ghost_key` | Press a key or type text |
-| `ghost_eval` | Run a JavaScript function in the page |
+| `ghost_eval` | Run a JavaScript function in the page (explicit opt-in) |
 | `ghost_screenshot` | Capture the visible page |
 | `ghost_scroll` | Scroll the page |
 | `ghost_wait` | Wait for a selector or bounded delay |
@@ -24,4 +24,5 @@ Ghost exposes one shared command set over Chrome and Hermes Desktop.
 Chrome uses the authenticated extension bridge on loopback. Hermes Desktop uses
 the authenticated local protocol described in `IN_APP_BROWSER_PROTOCOL.md`.
 The Hermes Agent adapter in `hermes-plugin/` registers the same tools without
-adding dependencies to Hermes core.
+adding dependencies to Hermes core. `ghost_eval` is registered but blocked
+unless the operator enables `allow_eval`.

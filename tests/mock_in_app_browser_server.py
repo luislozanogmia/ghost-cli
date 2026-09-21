@@ -285,7 +285,6 @@ class MockInAppBrowserServer:
         return {
             "filled": True,
             "tag": "input",
-            "value": value,
         }
 
     def _cmd_key(self, params: dict) -> dict:
@@ -295,7 +294,7 @@ class MockInAppBrowserServer:
             raise ValueError("Provide key or text")
 
         if text:
-            return {"typed": text}
+            return {"typed": True, "characters": len(text)}
         return {"key": key, "pressed": True}
 
     def _cmd_eval(self, params: dict) -> dict:

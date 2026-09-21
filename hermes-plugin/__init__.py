@@ -37,12 +37,12 @@ TOOL_SPECS = (
 def register(ctx) -> None:
     backend = str(ctx.get_config("backend", "auto"))
     chrome_port = int(ctx.get_config("chrome_port", 9378))
-    hermes_port = int(ctx.get_config("hermes_port", 9400))
+    allow_eval = bool(ctx.get_config("allow_eval", False))
 
     def handler(name):
         def run(arguments, **_kwargs):
             try:
-                client = BrowserClient(backend, chrome_port, hermes_port)
+                client = BrowserClient(backend, chrome_port, allow_eval)
                 result = client.call(name, arguments or {})
                 return json.dumps({"ok": True, "backend": client.active_backend, "result": result}, ensure_ascii=False)
             except Exception as exc:

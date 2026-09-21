@@ -23,8 +23,10 @@ sensitive login steps themselves.
 ```bash
 ./ghost-cli call ghost_vacuum --args '{"url":"https://example.com","limit":30}'
 ./ghost-cli call ghost_click --args '{"choice":2}'
-./ghost-cli call ghost_eval --args '{"script":"() => document.title"}'
+./ghost-cli call ghost_eval --allow-eval --args '{"script":"() => document.title"}'
 ```
 
 Select a target with `--backend chrome` or `--backend hermes`. The default
 `auto` mode prefers Hermes Desktop when its browser endpoint is available.
+The Chrome bridge must also be started with `--allow-eval` before eval calls are
+accepted. Leave eval disabled when ordinary navigation tools are sufficient.
